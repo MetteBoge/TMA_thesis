@@ -12,7 +12,7 @@ library(R.utils)
 ```
 
 ```{r}
-target_list <- c("PD-L1", "PDL1", "PDL2", "PD-L2", "IDO1", "IDO-1", "TDO", "ARG1", "ARG-1", "ARG2", "ARG-2", "TGFB1", "CCL22", "MCP1", "LGALS3", "GARP","LRRC32", "IL10", "SIGLEC15", "MLIAP")
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 
 ```
 
@@ -43,10 +43,6 @@ if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
 if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
   gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
 }
-```
-
-```{r}
-file.exists(paste(file_path, file_name_data, ".tsv", sep = ""))
 ```
 
 ```{r}
@@ -101,9 +97,16 @@ cohort_list <- c("TCGA_LAML",
 ```
 
 ```{r}
+# Read the list with dataframes instead of running loop below: 
+readRDS("df_data_list.RData")
+```
+
+```{r}
 df_data_list <- c()
 
 for (i in 1:length(url_list)){
+  print(cohort_list[i])
+  
   url <- url_list[i]
   file_name_data <- paste0(cohort_list[i], "_", data_type)
   
@@ -119,6 +122,7 @@ for (i in 1:length(url_list)){
   df_data_list[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
 }
 
+saveRDS(df_data_list, file="df_data_list.RData")
 ```
 
 ```{r}
@@ -129,31 +133,51 @@ preproc_df_list <- Map(function(df, cohort_x) {
     pivot_longer(cols = -target, 
                  names_to = "sample", 
                  values_to = "gene_exp") %>% 
-    mutate(cancer_type = cohort_x)
+    mutate(cancer_type = str_remove(cohort_x, "TCGA_"))
 }, df_data_list, cohort_list)
 
 full_df <- bind_rows(preproc_df_list) 
-```
 
-```{r}
 targets_in_df_list <- full_df %>% 
   select(target) %>% 
   unique() %>% 
   as.list() %>% 
   unlist()
+```
+
+```{r}
+target_x = targets_in_df_list[4]
+
+get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.15) {
+  return(data.frame(
+    y = 0.95 * upper_limit,
+    label = paste(
+      "Count =", length(y)
+    )
+  ))
+}
+
+# CD274 = PD-L1
+# PDCD1LG2 = PD-L2
+# CCL2 = MCP-1
+# BIRC7 = MLIAP
+# LRRC32 = GARP
+# TDO2 = TDO
 
 full_df %>% 
-  filter(target == targets_in_df_list[1]) %>% 
+  filter(target == target_x) %>% 
   ggplot(aes(x=cancer_type, y=gene_exp)) +
     geom_boxplot() +
-    theme_minimal() +
+    geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+    theme_classic() +
     labs(
-      title = paste(targets_in_df_list[1]),
+      title = paste(target_x),
       subtitle = "Gene expression RNAseq pan cancer",
-      caption = "Source: Xena browser",
+      caption = "Source: Xena browser, TCGA",
       x = "Cancer type",
-      y = "Normalized pan cancer gene exp"
+      y = "Pan-cancer normalized log2(norm_count+1)"
     ) + 
+    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9) +
     theme(
       plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
