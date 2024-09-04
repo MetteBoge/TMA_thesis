@@ -73,6 +73,11 @@ df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep
 ## Download gene expression across cohorts
 
 ```{r}
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+
+data_type = "gene_expression_RNAseq_pancan_normalized"
+
 url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CHOL.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CESC.sampleMap%2FHiSeqV2_PANCAN.gz",
@@ -93,6 +98,87 @@ cohort_list <- c("TCGA_LAML",
                  "TCGA_SKCM",
                  "TCGA_LUAD",
                  "TCGA_LUSC")
+```
+
+```{r}
+df_data_list <- c()
+
+for (i in 1:length(url_list)){
+  url <- url_list[i]
+  file_name_data <- paste0(cohort_list[i], "_", data_type)
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+  }
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+  }
+  
+  df_data_list[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+}
+
+```
+
+```{r}
+# Preprocess data frames to be pivot long and add cancer type as column:
+preproc_df_list <- Map(function(df, cohort_x) {
+  filter(df, sample %in% target_list) %>% 
+    rename(target = sample) %>% 
+    pivot_longer(cols = -target, 
+                 names_to = "sample", 
+                 values_to = "gene_exp") %>% 
+    mutate(cancer_type = cohort_x)
+}, df_data_list, cohort_list)
+
+full_df <- bind_rows(preproc_df_list) 
+```
+
+```{r}
+targets_in_df_list <- full_df %>% 
+  select(target) %>% 
+  unique() %>% 
+  as.list() %>% 
+  unlist()
+
+full_df %>% 
+  filter(target == targets_in_df_list[1]) %>% 
+  ggplot(aes(x=cancer_type, y=gene_exp)) +
+    geom_boxplot() +
+    theme_minimal() +
+    labs(
+      title = paste(targets_in_df_list[1]),
+      subtitle = "Gene expression RNAseq pan cancer",
+      caption = "Source: Xena browser",
+      x = "Cancer type",
+      y = "Normalized pan cancer gene exp"
+    ) + 
+    theme(
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic")
+    )
+```
+
+```{r}
+
+func_preproc_df <- function (df, cohort_x){
+  filter(df, sample %in% target_list) %>% 
+    rename(target = sample) %>% 
+    pivot_longer(cols=-target,
+                 names_to="sample",
+                 values_to="gene_exp") %>% 
+    mutate(cancer_type = cohort_x)
+}
+
+filtered_df_list[[1]] %>% 
+  filter(sample %in% target_list) %>% 
+  rename(target = sample) %>% 
+  pivot_longer(cols=-target,
+               names_to="sample",
+               values_to="gene_exp") %>% 
+  mutate(cancer_type = cohort[1])
 ```
 
 ## Plot
