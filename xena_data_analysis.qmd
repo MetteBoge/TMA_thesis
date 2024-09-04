@@ -148,15 +148,17 @@ targets_in_df_list <- full_df %>%
 ```{r}
 target_x = targets_in_df_list[4]
 
-get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.15) {
+get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.5) {
   return(data.frame(
     y = 0.95 * upper_limit,
     label = paste(
-      "Count =", length(y)
+      "n =", length(y)
     )
   ))
 }
 
+if (target_x)
+  
 # CD274 = PD-L1
 # PDCD1LG2 = PD-L2
 # CCL2 = MCP-1
@@ -177,12 +179,16 @@ full_df %>%
       x = "Cancer type",
       y = "Pan-cancer normalized log2(norm_count+1)"
     ) + 
-    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9) +
+    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9, size= 3.5) +
     theme(
       plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
       plot.caption = element_text(face = "italic")
     )
+```
+
+```{r}
+
 ```
 
 ```{r}
