@@ -16,13 +16,15 @@ library(R.utils)
 ```{r}
 # Cohort:
 cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
+data_type = "gene_expression_RNAseq"
 
 # Specify the URL of the file you want to download
 url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FGA.gz"
 
 # Specify the file name and location where you want to save the file on your computer
-file_name <- cohort
+file_name <- paste0(cohort, "_", data_type)
 file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+
 
 dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
 
@@ -34,5 +36,11 @@ gunzip(paste(file_path, file_name, ".tsv.gz", sep = ""))
 ```
 
 ```{r}
-read.csv(paste(file_path, file_name, ".csv", sep = ""),sep = "\t")
+df <- read.csv(paste(file_path, file_name, ".tsv", sep = ""),sep = "\t")
+```
+
+## Plot
+
+```{r}
+rownames(df)
 ```
