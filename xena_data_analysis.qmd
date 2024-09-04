@@ -4,11 +4,16 @@ format: html
 editor: visual
 ---
 
-## Load packages
+## Load packages and targets
 
 ```{r}
 library(tidyverse)
 library(R.utils)
+```
+
+```{r}
+target_list <- c("PD-L1", "PDL1", "PDL2", "PD-L2", "IDO1", "IDO-1", "TDO", "ARG1", "ARG-1", "ARG2", "ARG-2", "TGFB1", "CCL22", "MCP1", "LGALS3", "GARP","LRRC32", "IL10", "SIGLEC15", "MLIAP")
+
 ```
 
 ## Download data
@@ -16,31 +21,87 @@ library(R.utils)
 ```{r}
 # Cohort:
 cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
-data_type = "gene_expression_RNAseq"
-
-# Specify the URL of the file you want to download
-url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FGA.gz"
-
-# Specify the file name and location where you want to save the file on your computer
-file_name <- paste0(cohort, "_", data_type)
 file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
-
-
 dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
-
-# Call the download.file() function, passing in the URL and file name/location as arguments
-download.file(url, paste(file_path, file_name, ".tsv.gz", sep = ""), mode = "wb")
-
-
-gunzip(paste(file_path, file_name, ".tsv.gz", sep = ""))
 ```
 
 ```{r}
-df <- read.csv(paste(file_path, file_name, ".tsv", sep = ""),sep = "\t")
+## Data
+data_type = "gene_expression_RNAseq_pancan_normalized"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_data <- paste0(cohort, "_", data_type)
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
+  # Call the download.file() function, passing in the URL and file name/location as arguments
+  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+}
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+file.exists(paste(file_path, file_name_data, ".tsv", sep = ""))
+```
+
+```{r}
+## Phenotype
+data_type = "phenotype"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FLAML_clinicalMatrix"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path, file_name_pheno, ".tsv", sep = "")))){
+  download.file(url, paste(file_path, file_name_pheno, ".tsv", sep = ""), mode = "wb")
+}
+```
+
+```{r}
+df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
+```
+
+## Download gene expression across cohorts
+
+```{r}
+url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CHOL.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CESC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.DLBC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.HNSC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.BRCA.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.PAAD.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.SKCM.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUAD.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUSC.sampleMap%2FHiSeqV2_PANCAN.gz")
+cohort_list <- c("TCGA_LAML",
+                 "TCGA_CHOL",
+                 "TCGA_CESC",
+                 "TCGA_DLBC",
+                 "TCGA_HNSC",
+                 "TCGA_BRCA",
+                 "TCGA_PAAD",
+                 "TCGA_SKCM",
+                 "TCGA_LUAD",
+                 "TCGA_LUSC")
 ```
 
 ## Plot
 
 ```{r}
-rownames(df)
+df_data %>% 
+  filter(sample %in% target_list)
+```
+
+```{r}
+df_phenotype
 ```
