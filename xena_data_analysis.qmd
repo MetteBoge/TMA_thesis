@@ -1,0 +1,38 @@
+---
+title: "xena_data_analysis"
+format: html
+editor: visual
+---
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(R.utils)
+```
+
+## Download data
+
+```{r}
+# Cohort:
+cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FGA.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name <- cohort
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+download.file(url, paste(file_path, file_name, ".tsv.gz", sep = ""), mode = "wb")
+
+
+gunzip(paste(file_path, file_name, ".tsv.gz", sep = ""))
+```
+
+```{r}
+read.csv(paste(file_path, file_name, ".csv", sep = ""),sep = "\t")
+```
