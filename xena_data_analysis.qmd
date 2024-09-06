@@ -12,68 +12,73 @@ library(R.utils)
 ```
 
 ```{r}
-target_list <- c("PD-L1", "PDL1", "PDL2", "PD-L2", "IDO1", "IDO-1", "TDO", "ARG1", "ARG-1", "ARG2", "ARG-2", "TGFB1", "CCL22", "MCP1", "LGALS3", "GARP","LRRC32", "IL10", "SIGLEC15", "MLIAP")
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3", "LRRC32", "IL10", "SIGLEC15", "BIRC7")
 
 ```
 
-## Download data
+## Download data of one cohort:
+
+Example of downloading one file:
 
 ```{r}
 # Cohort:
-cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
-file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
-dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+#cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
+#file_path <- "Data/XenaBrowser"
+#dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+
 ```
 
 ```{r}
 ## Data
-data_type = "gene_expression_RNAseq_pancan_normalized"
+#data_type = "gene_expression_RNAseq_pancan_normalized"
 
-# Specify the URL of the file you want to download
-url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz"
+## Specify the URL of the file you want to download
+#url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz"
 
 # Specify the file name and location where you want to save the file on your computer
-file_name_data <- paste0(cohort, "_", data_type)
+#file_name_data <- paste0(cohort, "_", data_type)
 
-if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
+#if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
   # Call the download.file() function, passing in the URL and file name/location as arguments
-  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
-}
+  #download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+#}
 
-if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
-  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
-}
+#if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  #gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+#}
 ```
 
 ```{r}
-file.exists(paste(file_path, file_name_data, ".tsv", sep = ""))
+#file.exists(paste(file_path, file_name_data, ".tsv", sep = ""))
 ```
 
 ```{r}
 ## Phenotype
-data_type = "phenotype"
+#data_type = "phenotype"
 
 # Specify the URL of the file you want to download
-url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FLAML_clinicalMatrix"
+#url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FLAML_clinicalMatrix"
 
 # Specify the file name and location where you want to save the file on your computer
-file_name_pheno <- paste0(cohort, "_", data_type)
+#file_name_pheno <- paste0(cohort, "_", data_type)
 
 # Call the download.file() function, passing in the URL and file name/location as arguments
-if (!(file.exists(paste(file_path, file_name_pheno, ".tsv", sep = "")))){
-  download.file(url, paste(file_path, file_name_pheno, ".tsv", sep = ""), mode = "wb")
-}
+#if (!(file.exists(paste(file_path, file_name_pheno, ".tsv", sep = "")))){
+  #download.file(url, paste(file_path, file_name_pheno, ".tsv", sep = ""), mode = "wb")
+#}
 ```
 
 ```{r}
-df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
-df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
+#df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+#df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
 ```
 
-## Download gene expression across cohorts
+## Download gene expresseion data across multiple cohorts:
+
+Define URL for each file and cohort names:
 
 ```{r}
-url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
+urls_RNAseq <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CHOL.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CESC.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.DLBC.sampleMap%2FHiSeqV2_PANCAN.gz",
@@ -83,25 +88,229 @@ url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LA
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.SKCM.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUAD.sampleMap%2FHiSeqV2_PANCAN.gz",
               "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUSC.sampleMap%2FHiSeqV2_PANCAN.gz")
-cohort_list <- c("TCGA_LAML",
-                 "TCGA_CHOL",
-                 "TCGA_CESC",
-                 "TCGA_DLBC",
-                 "TCGA_HNSC",
-                 "TCGA_BRCA",
-                 "TCGA_PAAD",
-                 "TCGA_SKCM",
-                 "TCGA_LUAD",
-                 "TCGA_LUSC")
+
+cohort_list <- c("LAML",
+                 "CHOL",
+                 "CESC",
+                 "DLBC",
+                 "HNSC",
+                 "BRCA",
+                 "PAAD",
+                 "SKCM",
+                 "LUAD",
+                 "LUSC")
+
+dest_files_RNAseq <- basename(urls_RNAseq)
+file_path = "Data/XenaBrowser/"
 ```
 
-## Plot
+Download all files to destination:
 
 ```{r}
-df_data %>% 
-  filter(sample %in% target_list)
+# Loop through each URL
+data_type = "gene_expression"
+df_data_list_RNAseq = list()
+for (i in 1:length(urls_RNAseq)){
+  url <- urls_RNAseq[i]
+  file_name_data <- paste0(cohort_list[i], "_", data_type)
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+  }
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+  }
+  
+  df_data_list_RNAseq[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+}
+```
+
+### Data wrangling - long format
+
+```{r}
+# Preprocess data frames to be pivot long and add cancer type as column:
+preproc_df_list_gene_expr <- Map(function(df, cohort_x) {
+  filter(df, sample %in% target_list) %>% 
+    rename(target = sample) %>% 
+    pivot_longer(cols = -target, 
+                 names_to = "sample", 
+                 values_to = "gene_exp") %>% 
+    mutate(cancer_type = cohort_x)
+}, df_data_list_RNAseq, cohort_list)
+
+df_gene_expr_targets_long <- bind_rows(preproc_df_list_gene_expr) 
+```
+
+## Download data of somatic mutations across multiple cohorts
+
+```{r}
+urls_mutation <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2Fmutation_wustl_gene.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FCHOL_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FCESC_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FDLBC_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FHNSC_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FBRCA_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FPAAD_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FSKCM_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FLUAD_mc3_gene_level.txt.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2FLUSC_mc3_gene_level.txt.gz")
 ```
 
 ```{r}
-df_phenotype
+data_type = "somatic_mutations"
+df_data_list_mutations = list()
+for (i in 1:length(urls_mutation)){
+  url <- urls_mutation[i]
+  file_name_data <- paste0(cohort_list[i], "_", data_type)
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+  }
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+  }
+  
+  df_data_list_mutations[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+}
 ```
+
+### Data wrangling - long format
+
+```{r}
+# Preprocess data frames to be pivot long and add cancer type as column:
+preproc_df_list_mutation <- Map(function(df, cohort_x) {
+  df |>
+    rename(target = sample) %>% 
+    pivot_longer(cols = -target, 
+                 names_to = "sample", 
+                 values_to = "somatic_mut") %>% 
+    mutate(cancer_type = cohort_x)
+}, df_data_list_mutations, cohort_list)
+
+df_mutations_all_long <- bind_rows(preproc_df_list_mutation) 
+```
+
+### Make tabel summary of top five most mutated genes for each cancer type:
+
+```{r}
+df_top_targets <- df_mutations_all_long %>%
+  group_by(cancer_type, target) %>%  # Group by both cancer type and target
+  summarise(
+    total_count = n(),  # Total number of data points for each target
+    count_of_ones = sum(somatic_mut == 1),  # Number of 1s for each target
+    percentage_of_ones = (count_of_ones / total_count) * 100  # Calculate percentage of 1s
+  ) %>%
+  filter(percentage_of_ones > 0) %>%  # Optionally remove targets with 0% ones
+  arrange(cancer_type, desc(percentage_of_ones)) %>%  # Sort by cancer type and percentage
+  group_by(cancer_type) %>%  # Regroup by cancer type to find top 5 for each
+  slice_max(percentage_of_ones, n = 5)  # Select the top 5 targets for each cancer type
+```
+
+```{r}
+df_mutation_percentage <- full_df_mutations %>%
+  filter(cancer_type == selected_cancer_type) %>%  # Filter for the specific cancer type
+  group_by(target) %>%
+  summarise(
+    total_count = n(),  # Total number of data points for each target
+    count_of_ones = sum(somatic_mut == 1),  # Number of 1s for each target
+    percentage_of_ones = (count_of_ones / total_count)  # Calculate percentage of 1s
+  ) %>%
+  filter(percentage_of_ones > 0)  # Optionally remove targets with 0% ones
+
+```
+
+```{r}
+# Calculate the percentage of 1s out of all data points for each target in the specified cancer type
+selected_cancer_type="PAAD"
+n_samples = full_df_mutations |>
+  filter(cancer_type == selected_cancer_type) |>
+  summarise(n_unique_samples = n_distinct(sample)) |>
+  pull(n_unique_samples)
+  
+df_mutation_percentage <- full_df_mutations %>%
+  filter(cancer_type == selected_cancer_type) %>%  # Filter for the specific cancer type
+  group_by(target) %>%
+  summarise(
+    total_count = n(),  # Total number of data points for each target
+    count_of_ones = sum(somatic_mut == 1),  # Number of 1s for each target
+    percentage_of_ones = (count_of_ones / total_count)  # Calculate percentage of 1s
+  ) %>%
+  filter(percentage_of_ones > 0)  # Optionally remove targets with 0% ones
+
+```
+
+```{r}
+# Create a bar plot using ggplot2
+df_mutation_percentage |>
+  arrange(desc(count_of_ones)) %>%  # Sort by count in descending order
+  slice_head(n = 10) |> 
+  ggplot(aes(x = reorder(target, -percentage_of_ones), y = percentage_of_ones)) +
+    geom_bar(stat = "identity") +
+    labs(title = paste("Percentange of samples with somatic mutations in patients with", selected_cancer_type),
+         x = "Genes",
+         y = paste("Percentage (%) of", n_samples, "samples", sep = " ")) +
+    theme_minimal() +
+    theme(legend.position = "none")  # Remove legend if target is used only for fill
+```
+
+```{r}
+# Preprocess data frames to be pivot long and add cancer type as column:
+preproc_df_list <- Map(function(df, cohort_x) {
+  filter(df, sample %in% target_list) %>% 
+    rename(target = sample) %>% 
+    pivot_longer(cols = -target, 
+                 names_to = "sample", 
+                 values_to = "somatic_mut") %>% 
+    mutate(cancer_type = cohort_x)
+}, df_data_list_mutations, cohort_list)
+
+full_df_mutations_targets <- bind_rows(preproc_df_list) 
+```
+
+Merging the dataframes:
+
+```{r}
+full_df_combined <- merge(full_df, full_df_mutations_targets, by=c("cancer_type", "sample", "target"))
+```
+
+```{r}
+mut_samples = full_df_mutations |>
+  filter(cancer_type == "PAAD",
+         target == "KRAS")
+```
+
+```{r}
+selected_cancer_type = "SKCM"
+selected_target = "LGALS3"
+selected_mutation_target = "TTN"
+
+mut_samples = full_df_mutations |>
+  filter(cancer_type == selected_cancer_type,
+         target == selected_mutation_target)
+
+full_df_combined |>
+  filter(cancer_type == selected_cancer_type,
+         target == selected_target) |>
+  inner_join(mut_samples, by=c("sample", "cancer_type")) |>
+  ggplot(aes(x=factor(somatic_mut.y), y=gene_exp)) +
+  geom_boxplot() + 
+  stat_compare_means() + 
+  labs(
+    title = selected_target,
+    subtitle = paste("Gene expression of", selected_target ,"in patients with", selected_cancer_type, "cancer grouped by somatic mutation in the", selected_mutation_target, "gene", sep=" "),
+    caption = "Source: Xena Browser, TCGA",
+    x = "Somatic mutation (0 = wt, 1 = mutation)",
+    y = "Pan-cancer normalized log2(norm_count+1)"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 0))
+```
+
+/

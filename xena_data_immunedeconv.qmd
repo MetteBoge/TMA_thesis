@@ -1,0 +1,175 @@
+# Immune deconvolution of TCGA Pan-Cancer from the XenaBrowser
+
+## Load libraries:
+
+```{r}
+library(tidyverse)
+library(R.utils)
+library(immunedeconv)
+library(stringr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+#library(biomaRt)
+#library(BiocFileCache)
+#library(BiocManager)
+```
+
+## Download dataset:
+
+```{r}
+cohort = "TCGA_PANCAN"
+file_path <- "Data/XenaBrowser/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+data_type = "gene_expression_RNAseq_tpm"
+
+## Specify the URL of the file you want to download
+url <- "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/tcga_RSEM_gene_tpm.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_data <- paste0(cohort, "_", data_type)
+
+options(timeout = 10000)
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
+  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+}
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+}
+```
+
+## Import data:
+
+```{r}
+df_data <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
+df_phenotype_disease <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
+```
+
+## Data wrangling:
+
+```{r}
+## Get sample IDs for AML:
+AML_samples <- as_tibble(df_phenotype_disease) |>
+  filter(X_primary_disease == "acute myeloid leukemia") |>
+  dplyr::select(sample)
+```
+
+```{r}
+## Get only samples from AML cancer:
+df_data_gene_expr <- df_data |>
+  rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(sample, any_of(AML_samples$sample)) |>
+  rename(gene = sample) |>
+  mutate(gene = str_replace(gene, "\\..*", ""))
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3", "LRRC32", "IL10", "SIGLEC15", "BIRC7")
+
+target_list_ENSG <- c("ENSG00000120217",
+                     "ENSG00000197646",
+                     "ENSG00000131203",
+                     "ENSG00000151790",
+                     "ENSG00000118520",
+                     "ENSG00000081181",
+                     "ENSG00000105329",
+                     "ENSG00000102962",
+                     "ENSG00000108691",
+                     "ENSG00000131981",
+                     "ENSG00000137507",
+                     "ENSG00000136634",
+                     "ENSG00000197046",
+                     "ENSG00000101197")
+```
+
+```{r}
+# Define your list of Ensembl gene IDs
+ensembl.genes <- df_data_gene_expr$gene
+#writeLines(ensembl.genes, "ENSG_genes.txt")
+# Convert Ensembl IDs to HGNC symbols
+gene_mapping <- bitr(ensembl.genes, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = "org.Hs.eg.db")
+```
+
+```{r}
+gene_expr_df <- as_tibble(gene_mapping) |>
+  dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
+  inner_join(df_data_gene_expr, by="gene") |>
+  dplyr::select(symbol, everything(), -gene) |>
+  distinct(symbol, .keep_all = TRUE) |>
+  column_to_rownames(var = "symbol")
+```
+
+```{r}
+## Filter DF for targets and translate ENSG to HGNC symbol:
+mapping <- setNames(target_list, target_list_ENSG)
+
+df_data_gene_expr_transformed <- df_data_gene_expr |>
+  filter(gene %in% target_list_ENSG) |>
+  mutate(gene = map_chr(gene, ~ ifelse(.x %in% names(mapping), mapping[.x], .x))) |>
+  mutate(across(-1, as.numeric)) |>
+  mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  column_to_rownames(var = "gene")
+  
+```
+
+```{r}
+# Convert the tibble to a data frame (if not already)
+gene_expr_matrix <- as.matrix(gene_expr_df)
+res_quantiseq <- deconvolute(gene_expr_matrix, "quantiseq", tumor = TRUE)
+```
+
+```{r}
+res_quantiseq |>
+  pivot_longer(cols = -cell_type,
+               names_to = "sample",
+               values_to = "percentage") |>
+  ggplot(aes(x=cell_type, y=percentage)) + 
+  geom_boxplot()
+```
+
+```{r}
+df_data_long <- df_data |>
+  rename(gene = sample) |>
+  pivot_longer(cols = -gene, 
+                 names_to = "sample", 
+                 values_to = "gene_exp") |>
+  mutate(sample = str_replace_all(sample, "\\.", "-"),
+         gene = str_replace(gene, "\\..*", ""))
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3", "LRRC32", "IL10", "SIGLEC15", "BIRC7")
+
+target_list_ENSG <- c("ENSG00000120217",
+                     "ENSG00000197646",
+                     "ENSG00000131203",
+                     "ENSG00000151790",
+                     "ENSG00000118520",
+                     "ENSG00000081181",
+                     "ENSG00000105329",
+                     "ENSG00000102962",
+                     "ENSG00000108691",
+                     "ENSG00000131981",
+                     "ENSG00000137507",
+                     "ENSG00000136634",
+                     "ENSG00000197046",
+                     "ENSG00000101197")
+```
+
+```{r}
+df_data_long |>
+  filter(gene %in% target_list_ENSG) |>
+  inner_join(df_phenotype_disease, by=c("sample"))
+```
+
+```{r}
+df_gene_expr <- df_data |>
+  mutate(sample = str_replace(sample, "\\..*", "")) |>
+  filter(sample %in% target_list_ENSG )
+  
+```
+
+```{r}
+immunedeconv::deconvolute_estimate(df_gene_expr)
+```
