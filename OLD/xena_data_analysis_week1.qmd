@@ -20,24 +20,22 @@ target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "
 
 ```{r}
 # Cohort:
-cohort = "TCGA_PANCAN"
+cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
 file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
 dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
 ```
 
 ```{r}
 ## Data
-data_type = "gene_expression_RNAseq_tpm"
+data_type = "gene_expression_RNAseq_pancan_normalized"
 
 # Specify the URL of the file you want to download
-url <- "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/tcga_RSEM_gene_tpm.gz"
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz"
 
 # Specify the file name and location where you want to save the file on your computer
 file_name_data <- paste0(cohort, "_", data_type)
 
-options(timeout=1000)
-if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
-        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
   # Call the download.file() function, passing in the URL and file name/location as arguments
   download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
 }
@@ -48,78 +46,27 @@ if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
 ```
 
 ```{r}
-## sampleType_primaryDisease
-data_type = "sampleType_primaryDisease"
+## Phenotype
+data_type = "phenotype"
 
 # Specify the URL of the file you want to download
-url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/TCGA_phenotype_denseDataOnlyDownload.tsv.gz"
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FLAML_clinicalMatrix"
 
 # Specify the file name and location where you want to save the file on your computer
-file_name_pheno1 <- paste0(cohort, "_", data_type)
+file_name_pheno <- paste0(cohort, "_", data_type)
 
 # Call the download.file() function, passing in the URL and file name/location as arguments
-if (!(file.exists(paste(file_path, file_name_pheno1, ".tsv.gz", sep = "")) | 
-        file.exists(paste(file_path, file_name_pheno1, ".tsv", sep = "")))){
-  download.file(url, paste(file_path, file_name_pheno1, ".tsv", sep = ""), mode = "wb")
-}
-if (!(file.exists(paste(file_path, file_name_pheno1, ".tsv", sep = "")))){
-  gunzip(paste(file_path, file_name_pheno1, ".tsv.gz", sep = ""))
+if (!(file.exists(paste(file_path, file_name_pheno, ".tsv", sep = "")))){
+  download.file(url, paste(file_path, file_name_pheno, ".tsv", sep = ""), mode = "wb")
 }
 ```
 
 ```{r}
 df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
-df_st_pd <- read.csv(paste(file_path, file_name_pheno1, ".tsv", sep = ""),sep = "\t")
-
-# Change format of colnames to have "-" instead of ".":
-colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
+df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
 ```
 
-### Subset and wrangle data
-
-```{r}
-geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
-geneName_ensg <- geneName_ensg %>% 
-  rename(gene_ensg_shrt = converted_alias) %>% 
-  select(name, gene_ensg_shrt)
-geneName_ensg
-```
-
-```{r}
-
-cancer_types_list <- c("skin cutaneous melanoma",
-  "acute myeloid leukemia",
-  "cholangiocarcinoma",
-  "pancreatic adenocarcinoma",
-  "head & neck squamous cell carcinoma",
-  "breast invasive carcinoma",
-  "lung squamous cell carcinoma",
-  "diffuse large B-cell lymphoma",
-  "cervical & endocervical cancer")
-
-cancer_type <- "pancreatic adenocarcinoma"
-
-df_st_pd_2 <- df_st_pd %>% 
-  filter(X_primary_disease %in% cancer_type &
-           sample %in% colnames(df_data)) 
-
-df_subdata <- df_data %>% 
-  select(sample, unlist(df_st_pd_2["sample"], use.names = FALSE))
-
-df_st_pd_2
-```
-
-```{r}
-df_subdata_2 <- df_subdata %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  full_join(geneName_ensg, by="gene_ensg_shrt") %>% 
-  relocate(sample, gene_ensg_shrt, name) %>% 
-  filter(!(is.na(name)))
-
-df_subdata_2
-```
-
-## Adjust for cell type
+## Gene expression across cohorts
 
 ### Download data
 
@@ -268,7 +215,7 @@ One study at a time, look at gene expression of targets and correlation to pheno
 ```{r}
 file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
 dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
- 
+
 data_type = "phenotype"
 
 url_phenotype_list <- c("https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LAML.GDC_phenotype.tsv.gz",
