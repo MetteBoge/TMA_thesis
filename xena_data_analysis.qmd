@@ -66,7 +66,9 @@ df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t
 df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
 ```
 
-## Download gene expression across cohorts
+## Gene expression across cohorts
+
+### Download data
 
 ```{r}
 file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
@@ -125,6 +127,8 @@ for (i in 1:length(url_list)){
 saveRDS(df_data_list, file="df_data_list.RData")
 ```
 
+### Wrangle data
+
 ```{r}
 # Preprocess data frames to be pivot long and add cancer type as column:
 preproc_df_list <- Map(function(df, cohort_x) {
@@ -138,15 +142,34 @@ preproc_df_list <- Map(function(df, cohort_x) {
 
 full_df <- bind_rows(preproc_df_list) 
 
+full_df <- full_df %>% 
+  group_by(cancer_type) %>% 
+    mutate(cancer_name = paste0(cancer_type, " n=", n_distinct(sample))) %>% 
+    ungroup() %>% 
+  mutate(g_name = ifelse(target == "CD274", "CD274 (PD-L1)",
+                         ifelse(target == "PDCD1LG2", "PDCD1LG2 (PD-L2)", 
+                                ifelse(target == "CCL2", "CCL2 (MCP-1)",
+                                       ifelse(target == "BIRC7", "BIRC7 (MLIAP)",
+                                              ifelse(target == "LRRC32", "LRRC32 (GARP)",
+                                                     ifelse(target == "TDO2", "TDO2 (TDO)", target))))))) 
+
+
 targets_in_df_list <- full_df %>% 
   select(target) %>% 
   unique() %>% 
   as.list() %>% 
   unlist()
+
 ```
 
 ```{r}
-target_x = targets_in_df_list[4]
+full_df
+```
+
+### Plot
+
+```{r}
+target_x = targets_in_df_list[2]
 
 get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.5) {
   return(data.frame(
@@ -157,65 +180,38 @@ get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)
   ))
 }
 
-if (target_x)
-  
-# CD274 = PD-L1
-# PDCD1LG2 = PD-L2
-# CCL2 = MCP-1
-# BIRC7 = MLIAP
-# LRRC32 = GARP
-# TDO2 = TDO
 
 full_df %>% 
-  filter(target == target_x) %>% 
-  ggplot(aes(x=cancer_type, y=gene_exp)) +
+  ggplot(aes(x=g_name, y=gene_exp)) +
     geom_boxplot() +
     geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
     theme_classic() +
     labs(
-      title = paste(target_x),
-      subtitle = "Gene expression RNAseq pan cancer",
+      title = "Gene expression RNAseq pan cancer",
+      #subtitle = "Gene expression RNAseq pan cancer",
       caption = "Source: Xena browser, TCGA",
       x = "Cancer type",
       y = "Pan-cancer normalized log2(norm_count+1)"
     ) + 
-    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9, size= 3.5) +
+#    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9, size= 3.5) +
     theme(
       plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
       plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
-      plot.caption = element_text(face = "italic")
-    )
+      plot.caption = element_text(face = "italic"),
+      axis.text.x = element_text(angle=40, vjust = 0.6)
+    ) +
+    facet_wrap(~ cancer_name, scales="free") +
+    scale_y_continuous(limits = c(-10,10))
 ```
 
 ```{r}
 
 ```
 
-```{r}
-
-func_preproc_df <- function (df, cohort_x){
-  filter(df, sample %in% target_list) %>% 
-    rename(target = sample) %>% 
-    pivot_longer(cols=-target,
-                 names_to="sample",
-                 values_to="gene_exp") %>% 
-    mutate(cancer_type = cohort_x)
-}
-
-filtered_df_list[[1]] %>% 
-  filter(sample %in% target_list) %>% 
-  rename(target = sample) %>% 
-  pivot_longer(cols=-target,
-               names_to="sample",
-               values_to="gene_exp") %>% 
-  mutate(cancer_type = cohort[1])
-```
-
-## Plot
+## Phenotypic relations, cancer specific
 
 ```{r}
-df_data %>% 
-  filter(sample %in% target_list)
+# Take gene_exp data used from before and 
 ```
 
 ```{r}
