@@ -1,6 +1,6 @@
 {
   "name": "R Dev Container",
-  "image": "rocker/verse:4.2.1", 
+  "image": "rocker/verse:4.2.1",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -9,6 +9,6 @@
       ]
     }
   },
-  "postCreateCommand": "R -e 'install.packages(c(\"tidyverse\", \"R.utils\"))'"
+  "postCreateCommand": "mkdir -p /var/lib/docker/codespacemount/.persistedshare && R -e 'install.packages(c(\"tidyverse\", \"R.utils\"))'"
 }
 
