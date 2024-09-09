@@ -104,7 +104,9 @@ df_st_pd_2 <- df_st_pd %>%
            sample %in% colnames(df_data)) 
 
 df_subdata <- df_data %>% 
-  select(sample, unlist(df_st_pd_2["sample"], use.names = FALSE))
+  dplyr::select(sample, unlist(df_st_pd_2["sample"], use.names = FALSE)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
 
 df_st_pd_2
 ```
@@ -121,140 +123,64 @@ df_subdata_2
 
 ## Adjust for cell type
 
-### Download data
-
 ```{r}
-file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
-dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+#install.packages("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/immunedeconv-master/immunedeconv-master/", repos = NULL, type = "source")
 
-data_type = "gene_expression_RNAseq_pancan_normalized"
-
-url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CHOL.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CESC.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.DLBC.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.HNSC.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.BRCA.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.PAAD.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.SKCM.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUAD.sampleMap%2FHiSeqV2_PANCAN.gz",
-              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUSC.sampleMap%2FHiSeqV2_PANCAN.gz")
-cohort_list <- c("TCGA_LAML",
-                 "TCGA_CHOL",
-                 "TCGA_CESC",
-                 "TCGA_DLBC",
-                 "TCGA_HNSC",
-                 "TCGA_BRCA",
-                 "TCGA_PAAD",
-                 "TCGA_SKCM",
-                 "TCGA_LUAD",
-                 "TCGA_LUSC")
+library(immunedeconv)
+library(tidyverse)
+library(biomaRt)
+library(knitr)
 ```
 
 ```{r}
-# Read the list with dataframes instead of running loop below: 
-readRDS("df_data_list.RData")
+# Change ENSG to gene names: 
+mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+genes <- df_subdata$gene_ensg_shrt
+
+G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
+
+
+df_subdata <- df_subdata %>% 
+  left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
+  relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
+  filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
+  distinct(hgnc_symbol, .keep_all = TRUE) # Keep only ONE of duplicated genes 
+
+# Change genes to gowdames
+df_subdata %>% 
+  distinct(hgnc_symbol, .keep_all = TRUE) 
+```
+
+Use ESTIMATE to compute a score for tumoral, immune and stromal components and the fraction of tumor purity
+
+```{r}
+gExp_mat_subdata <- df_subdata %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  column_to_rownames(var = "hgnc_symbol") %>% 
+  as.matrix() 
+
+estimate_PAAD <- deconvolute_estimate(gExp_mat_subdata)
+
+quantiseq_PAAD <- immunedeconv::deconvolute(gExp_mat_subdata, method = "quantiseq")
+```
+
+### Plots and tables
+
+```{r}
+# Boxplot of estimates
+estimate_PAAD |>
+  rownames_to_column(var = "estimates") |>
+  pivot_longer(cols = -estimates,
+               names_to = "sample",
+               values_to = "scores") |>
+  ggplot(aes(x=estimates, y=scores)) + 
+  geom_boxplot() 
 ```
 
 ```{r}
-df_data_list <- c()
+#set_cibersort_binary(path)
 
-for (i in 1:length(url_list)){
-  print(cohort_list[i])
-  
-  url <- url_list[i]
-  file_name_data <- paste0(cohort_list[i], "_", data_type)
-  
-  if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
-        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
-    download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
-  }
-  
-  if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
-    gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
-  }
-  
-  df_data_list[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
-}
-
-saveRDS(df_data_list, file="df_data_list.RData")
-```
-
-### Wrangle data
-
-```{r}
-# Preprocess data frames to be pivot long and add cancer type as column:
-preproc_df_list <- Map(function(df, cohort_x) {
-  filter(df, sample %in% target_list) %>% 
-    rename(target = sample) %>% 
-    pivot_longer(cols = -target, 
-                 names_to = "sample", 
-                 values_to = "gene_exp") %>% 
-    mutate(cancer_type = str_remove(cohort_x, "TCGA_"))
-}, df_data_list, cohort_list)
-
-full_df <- bind_rows(preproc_df_list) 
-
-full_df <- full_df %>% 
-  group_by(cancer_type) %>% 
-    mutate(cancer_name = paste0(cancer_type, " n=", n_distinct(sample))) %>% 
-    ungroup() %>% 
-  mutate(g_name = ifelse(target == "CD274", "CD274 (PD-L1)",
-                         ifelse(target == "PDCD1LG2", "PDCD1LG2 (PD-L2)", 
-                                ifelse(target == "CCL2", "CCL2 (MCP-1)",
-                                       ifelse(target == "BIRC7", "BIRC7 (MLIAP)",
-                                              ifelse(target == "LRRC32", "LRRC32 (GARP)",
-                                                     ifelse(target == "TDO2", "TDO2 (TDO)", target))))))) 
-
-
-targets_in_df_list <- full_df %>% 
-  select(target) %>% 
-  unique() %>% 
-  as.list() %>% 
-  unlist()
-
-```
-
-```{r}
-full_df
-```
-
-### Plot
-
-```{r}
-target_x = targets_in_df_list[2]
-
-get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.5) {
-  return(data.frame(
-    y = 0.95 * upper_limit,
-    label = paste(
-      "n =", length(y)
-    )
-  ))
-}
-
-
-full_df %>% 
-  ggplot(aes(x=g_name, y=gene_exp)) +
-    geom_boxplot() +
-    geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
-    theme_classic() +
-    labs(
-      title = "Gene expression RNAseq pan cancer",
-      #subtitle = "Gene expression RNAseq pan cancer",
-      caption = "Source: Xena browser, TCGA",
-      x = "Cancer type",
-      y = "Pan-cancer normalized log2(norm_count+1)"
-    ) + 
-#    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9, size= 3.5) +
-    theme(
-      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
-      plot.caption = element_text(face = "italic"),
-      axis.text.x = element_text(angle=40, vjust = 0.6)
-    ) +
-    facet_wrap(~ cancer_name, scales="free") +
-    scale_y_continuous(limits = c(-10,10))
+knitr::kable(quantiseq_PAAD, digits = 2)
 ```
 
 ## Phenotypic relations, cancer specific
@@ -262,6 +188,10 @@ full_df %>%
 Take gene_exp data used from before and load in the phenotype data for the studies. Load survival data as well.
 
 One study at a time, look at gene expression of targets and correlation to phenotypes.
+
+```{r}
+devtools::install_github("omnideconv/immunedeconv")#, method = "libcurl")
+```
 
 ### Download phenotype and survival data
 
