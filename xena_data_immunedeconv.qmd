@@ -9,6 +9,7 @@ library(immunedeconv)
 library(stringr)
 library(clusterProfiler)
 library(org.Hs.eg.db)
+library(cowplot)
 #library(biomaRt)
 #library(BiocFileCache)
 #library(BiocManager)
@@ -109,8 +110,8 @@ gene_expr_df_AML <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_AML, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  #mutate(across(-1, as.numeric)) |>
-  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  mutate(across(-1, as.numeric)) |>
+  mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
 gene_expr_df_SCM <- as_tibble(gene_mapping) |>
@@ -118,8 +119,8 @@ gene_expr_df_SCM <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_SCM, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  #mutate(across(-1, as.numeric)) |>
-  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  mutate(across(-1, as.numeric)) |>
+  mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
 gene_expr_df_PAD <- as_tibble(gene_mapping) |>
@@ -127,22 +128,24 @@ gene_expr_df_PAD <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_PAD, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  #mutate(across(-1, as.numeric)) |>
-  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  mutate(across(-1, as.numeric)) |>
+  mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 ```
+
+Convert the gene expression data frame as a matrix:
 
 ```{r}
 gene_expr_matrix_AML <- as.matrix(gene_expr_df_AML)
 gene_expr_matrix_SCM <- as.matrix(gene_expr_df_SCM)
 gene_expr_matrix_PAD <- as.matrix(gene_expr_df_PAD)
-
-#res_quantiseq <- deconvolute(gene_expr_matrix, "quantiseq", tumor = TRUE)
 ```
 
 ## Deconvolution:
 
 Using ESTIMATE which computes a score for the tumoral, immune and stromal components and the fraction of tumor purity.
+
+<https://bioinformatics.mdanderson.org/estimate/>
 
 ```{r}
 estimate_AML = deconvolute_estimate(gene_expr_matrix_AML)
@@ -153,28 +156,52 @@ estimate_PAD = deconvolute_estimate(gene_expr_matrix_PAD)
 Plot estimates as a boxplot:
 
 ```{r}
-estimate_AML |>
+estimate_PAD |>
   rownames_to_column(var = "estimates") |>
   pivot_longer(cols = -estimates,
                names_to = "sample",
                values_to = "scores") |>
-  ggplot(aes(x=estimates, y=scores)) + 
-  geom_boxplot() 
+  ggplot(aes(x = scores, fill = estimates)) +
+  geom_histogram(bins = 30, alpha = 0.7, position = "identity") +
+  facet_wrap(~ estimates, scales = "free_x") +  # Separate histograms by estimates
+  theme_minimal() +
+  labs(x = "Scores", y = "Count", title = "Distribution of Scores by ESTIMATE in Pancreatic Adenocarcinoma")
+```
+
+Using quanTIseq to estimate immune cell fractions:
+
+<https://icbi.i-med.ac.at/software/quantiseq/doc/index.html>
+
+```{r}
+res_quantiseq_AML <- deconvolute(gene_expr_matrix_AML, "quantiseq", tumor = TRUE)
+res_quantiseq_SCM <- deconvolute(gene_expr_matrix_SCM, "quantiseq", tumor = TRUE)
+res_quantiseq_PAD <- deconvolute(gene_expr_matrix_PAD, "quantiseq", tumor = TRUE)
+```
+
+Plotting the cell fractions in a stacked barchart:
+
+```{r}
+quantiseq_AML %>%
+  gather(sample, fraction, -cell_type) %>%
+  # plot as stacked bar chart
+  ggplot(aes(x = sample, y = fraction, fill = cell_type)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_fill_brewer(palette = "Paired") +
+  theme(axis.text.y = element_blank())
 ```
 
 ```{r}
-res_quantiseq |>
-  pivot_longer(cols = -cell_type,
-               names_to = "sample",
-               values_to = "percentage") |>
-  ggplot(aes(x=cell_type, y=percentage)) + 
+quantiseq_PAD %>%
+  gather(sample, fraction, -cell_type) %>%
+  ggplot(aes(x=cell_type, y=fraction)) + 
   geom_boxplot() +
   labs(
     title = "Pancreatic Adenocarcinoma",
     subtitle = "Distribution of cell populations",
     caption = "Source: Xena Browser, TCGA PANCAN",
     x = "Cell types",
-    y = "Percentage"
+    y = "Fraction"
   ) +
   theme(
     plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
@@ -183,14 +210,108 @@ res_quantiseq |>
     axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+Using MCP-counter provides scores in arbitrary units that are only comparable between samples, but not between cell-types. With the scores being in arbitrary units, the results are not useful for judging if a cell type is present in the sample, or not. However, we can compare the relative values between samples and relate them to the results we obtained earlier using quanTIseq.
+
 ```{r}
-df_data_long <- df_data |>
-  rename(gene = sample) |>
-  pivot_longer(cols = -gene, 
-                 names_to = "sample", 
-                 values_to = "gene_exp") |>
-  mutate(sample = str_replace_all(sample, "\\.", "-"),
-         gene = str_replace(gene, "\\..*", ""))
+res_mcp_counter_AML <- deconvolute(gene_expr_df_AML, "mcp_counter")
+res_mcp_counter_SCM <- deconvolute(gene_expr_df_SCM, "mcp_counter")
+res_mcp_counter_PAD <- deconvolute(gene_expr_df_PAD, "mcp_counter")
+```
+
+```{r, fig.height=5, fig.width=12, warning=FALSE}
+res_mcp_counter_SCM %>%
+  gather(sample, score, -cell_type) %>%
+  ggplot(aes(x = sample, y = score, color = cell_type)) +
+  geom_point(size = 1) +
+  facet_wrap(~cell_type, scales = "free_x", ncol = 6) +
+  scale_color_brewer(palette = "Paired", guide = FALSE) +
+  coord_flip() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.text.y = element_blank()) + 
+  labs(title = "Skin Cutaneous Melanoma")
+```
+
+Predict cell population-specific gene expression 
+
+```{r}
+# Define a function to perform regression and predict gene expression for all genes
+predict_all_genes <- function(gene_expr_df, deconvolution) {
+  # Ensure deconvolution is a data frame and extract relevant data
+  deconvolution <- as.data.frame(deconvolution)
+  cell_types <- deconvolution$cells
+  deconvolution_samples <- deconvolution[, -1]  # Remove the cell types column
+
+  # Create an empty matrix to store predictions
+  predicted_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+  rownames(predicted_matrix) <- rownames(gene_expr_df)
+  colnames(predicted_matrix) <- colnames(gene_expr_df)
+  
+  # Iterate over each gene
+  for (gene in rownames(gene_expr_df)) {
+    # Extract gene expression values for the gene of interest
+    gene_expression <- as.numeric(gene_expr_df[gene, ])
+    
+    # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+    if (length(gene_expression) == ncol(deconvolution_samples)) {
+      # Perform linear regression
+      model <- lm(gene_expression ~ t(deconvolution_samples))
+      
+      # Predict gene expression
+      predicted_expression <- predict(model, newdata = as.data.frame(t(deconvolution_samples)))
+      
+      # Store predictions in the matrix
+      predicted_matrix[gene, ] <- predicted_expression
+    } else {
+      warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+    }
+  }
+  
+  return(predicted_matrix)
+}
+```
+
+Use the function to make predicted gene expression matrix:
+
+```{r}
+# Run the function - Takes a long time ro run so take a coffee break!
+predicted_gene_expr_AML <- predict_all_genes(gene_expr_df_AML, quantiseq_AML)
+predicted_gene_expr_PAD <- predict_all_genes(gene_expr_df_PAD, quantiseq_PAD)
+predicted_gene_expr_SCM <- predict_all_genes(gene_expr_df_SCM, quantiseq_SCM)
+```
+
+Plot the gene expression of all targets in the AML data set and compare predicted to original:
+
+```{r}
+plt_predicted <- as_tibble(predicted_gene_expr_PAD) |>
+  mutate(gene = rownames(predicted_gene_expr_PAD)) |>
+  dplyr::select(gene, everything()) |>
+  filter(gene %in% target_list) |>
+  mutate(across(-1, ~ log2(. + 0.001))) |>
+  gather(sample, gene_expr, -gene) |>
+  ggplot(aes(x=gene_expr, y=gene)) +
+  geom_boxplot() +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"))
+
+plt_original <- as_tibble(gene_expr_matrix_PAD) |>
+  mutate(gene = rownames(gene_expr_matrix_PAD)) |>
+  dplyr::select(gene, everything()) |>
+  filter(gene %in% target_list) |>
+  mutate(across(-1, ~ log2(. + 0.001))) |>
+  gather(sample, gene_expr, -gene) |>
+  ggplot(aes(x=gene_expr, y=gene)) +
+  geom_boxplot() +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"))
+```
+
+```{r}
+plot_grid(plt_predicted, plt_original, labels = c('A', 'B'), label_size = 12)
 ```
 
 ```{r}
