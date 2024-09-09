@@ -42,81 +42,124 @@ if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
 ## Import data:
 
 ```{r}
-df_data <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
+df_data <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")) 
 df_phenotype_disease <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
 ```
 
 ## Data wrangling:
+
+Extract sample IDs for specific cancer types:
 
 ```{r}
 ## Get sample IDs for AML:
 AML_samples <- as_tibble(df_phenotype_disease) |>
   filter(X_primary_disease == "acute myeloid leukemia") |>
   dplyr::select(sample)
+
+SCM_samples <- as_tibble(df_phenotype_disease) |>
+  filter(X_primary_disease == "skin cutaneous melanoma") |>
+  dplyr::select(sample)
+
+PAD_samples <- as_tibble(df_phenotype_disease) |>
+  filter(X_primary_disease == "pancreatic adenocarcinoma") |>
+  dplyr::select(sample)
+
+disease_list <- df_phenotype_disease |>
+  distinct(X_primary_disease)
 ```
+
+Filter the expression data frame to include only samples from selected cancer type:
 
 ```{r}
 ## Get only samples from AML cancer:
-df_data_gene_expr <- df_data |>
+df_data_gene_expr_AML <- df_data |>
   rename_with(~ str_replace_all(., "\\.", "-")) |>
   dplyr::select(sample, any_of(AML_samples$sample)) |>
-  rename(gene = sample) |>
+  dplyr::rename(gene = sample) |>
+  mutate(gene = str_replace(gene, "\\..*", ""))
+
+df_data_gene_expr_SCM <- df_data |>
+  rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(sample, any_of(SCM_samples$sample)) |>
+  dplyr::rename(gene = sample) |>
+  mutate(gene = str_replace(gene, "\\..*", ""))
+
+df_data_gene_expr_PAD <- df_data |>
+  rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(sample, any_of(PAD_samples$sample)) |>
+  dplyr::rename(gene = sample) |>
   mutate(gene = str_replace(gene, "\\..*", ""))
 ```
 
 ```{r}
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3", "LRRC32", "IL10", "SIGLEC15", "BIRC7")
-
-target_list_ENSG <- c("ENSG00000120217",
-                     "ENSG00000197646",
-                     "ENSG00000131203",
-                     "ENSG00000151790",
-                     "ENSG00000118520",
-                     "ENSG00000081181",
-                     "ENSG00000105329",
-                     "ENSG00000102962",
-                     "ENSG00000108691",
-                     "ENSG00000131981",
-                     "ENSG00000137507",
-                     "ENSG00000136634",
-                     "ENSG00000197046",
-                     "ENSG00000101197")
 ```
+
+Convert Ensemble IDs to HGNC symbols:
 
 ```{r}
 # Define your list of Ensembl gene IDs
-ensembl.genes <- df_data_gene_expr$gene
-#writeLines(ensembl.genes, "ENSG_genes.txt")
-# Convert Ensembl IDs to HGNC symbols
-gene_mapping <- bitr(ensembl.genes, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = "org.Hs.eg.db")
+#ensembl_genes <- df_data_gene_expr$gene
+#gene_mapping <- bitr(ensembl_genes, fromType = "ENSEMBL", toType = "SYMBOL", OrgDb = "org.Hs.eg.db")
 ```
 
 ```{r}
-gene_expr_df <- as_tibble(gene_mapping) |>
+gene_expr_df_AML <- as_tibble(gene_mapping) |>
   dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
-  inner_join(df_data_gene_expr, by="gene") |>
+  inner_join(df_data_gene_expr_AML, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  column_to_rownames(var = "symbol")
+
+gene_expr_df_SCM <- as_tibble(gene_mapping) |>
+  dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
+  inner_join(df_data_gene_expr_SCM, by="gene") |>
+  dplyr::select(symbol, everything(), -gene) |>
+  distinct(symbol, .keep_all = TRUE) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  column_to_rownames(var = "symbol")
+
+gene_expr_df_PAD <- as_tibble(gene_mapping) |>
+  dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
+  inner_join(df_data_gene_expr_PAD, by="gene") |>
+  dplyr::select(symbol, everything(), -gene) |>
+  distinct(symbol, .keep_all = TRUE) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 ```
 
 ```{r}
-## Filter DF for targets and translate ENSG to HGNC symbol:
-mapping <- setNames(target_list, target_list_ENSG)
+gene_expr_matrix_AML <- as.matrix(gene_expr_df_AML)
+gene_expr_matrix_SCM <- as.matrix(gene_expr_df_SCM)
+gene_expr_matrix_PAD <- as.matrix(gene_expr_df_PAD)
 
-df_data_gene_expr_transformed <- df_data_gene_expr |>
-  filter(gene %in% target_list_ENSG) |>
-  mutate(gene = map_chr(gene, ~ ifelse(.x %in% names(mapping), mapping[.x], .x))) |>
-  mutate(across(-1, as.numeric)) |>
-  mutate(across(-1, ~ (2^.x) - 0.001)) |>
-  column_to_rownames(var = "gene")
-  
+#res_quantiseq <- deconvolute(gene_expr_matrix, "quantiseq", tumor = TRUE)
 ```
 
+## Deconvolution:
+
+Using ESTIMATE which computes a score for the tumoral, immune and stromal components and the fraction of tumor purity.
+
 ```{r}
-# Convert the tibble to a data frame (if not already)
-gene_expr_matrix <- as.matrix(gene_expr_df)
-res_quantiseq <- deconvolute(gene_expr_matrix, "quantiseq", tumor = TRUE)
+estimate_AML = deconvolute_estimate(gene_expr_matrix_AML)
+estimate_SCM = deconvolute_estimate(gene_expr_matrix_SCM)
+estimate_PAD = deconvolute_estimate(gene_expr_matrix_PAD)
+```
+
+Plot estimates as a boxplot:
+
+```{r}
+estimate_AML |>
+  rownames_to_column(var = "estimates") |>
+  pivot_longer(cols = -estimates,
+               names_to = "sample",
+               values_to = "scores") |>
+  ggplot(aes(x=estimates, y=scores)) + 
+  geom_boxplot() 
 ```
 
 ```{r}
@@ -125,7 +168,19 @@ res_quantiseq |>
                names_to = "sample",
                values_to = "percentage") |>
   ggplot(aes(x=cell_type, y=percentage)) + 
-  geom_boxplot()
+  geom_boxplot() +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Distribution of cell populations",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Cell types",
+    y = "Percentage"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 ```{r}
@@ -139,37 +194,11 @@ df_data_long <- df_data |>
 ```
 
 ```{r}
-target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3", "LRRC32", "IL10", "SIGLEC15", "BIRC7")
-
-target_list_ENSG <- c("ENSG00000120217",
-                     "ENSG00000197646",
-                     "ENSG00000131203",
-                     "ENSG00000151790",
-                     "ENSG00000118520",
-                     "ENSG00000081181",
-                     "ENSG00000105329",
-                     "ENSG00000102962",
-                     "ENSG00000108691",
-                     "ENSG00000131981",
-                     "ENSG00000137507",
-                     "ENSG00000136634",
-                     "ENSG00000197046",
-                     "ENSG00000101197")
-```
-
-```{r}
 df_data_long |>
   filter(gene %in% target_list_ENSG) |>
   inner_join(df_phenotype_disease, by=c("sample"))
 ```
 
 ```{r}
-df_gene_expr <- df_data |>
-  mutate(sample = str_replace(sample, "\\..*", "")) |>
-  filter(sample %in% target_list_ENSG )
-  
-```
-
-```{r}
-immunedeconv::deconvolute_estimate(df_gene_expr)
+estimate <- immunedeconv::deconvolute_estimate(gene_expr_matrix)
 ```
