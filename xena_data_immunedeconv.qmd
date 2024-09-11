@@ -110,8 +110,8 @@ gene_expr_df_AML <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_AML, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  mutate(across(-1, as.numeric)) |>
-  mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
 gene_expr_df_SCM <- as_tibble(gene_mapping) |>
@@ -119,8 +119,8 @@ gene_expr_df_SCM <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_SCM, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  mutate(across(-1, as.numeric)) |>
-  mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
 gene_expr_df_PAD <- as_tibble(gene_mapping) |>
@@ -128,8 +128,8 @@ gene_expr_df_PAD <- as_tibble(gene_mapping) |>
   inner_join(df_data_gene_expr_PAD, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
-  mutate(across(-1, as.numeric)) |>
-  mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 ```
 
@@ -173,9 +173,9 @@ Using quanTIseq to estimate immune cell fractions:
 <https://icbi.i-med.ac.at/software/quantiseq/doc/index.html>
 
 ```{r}
-res_quantiseq_AML <- deconvolute(gene_expr_matrix_AML, "quantiseq", tumor = TRUE)
-res_quantiseq_SCM <- deconvolute(gene_expr_matrix_SCM, "quantiseq", tumor = TRUE)
-res_quantiseq_PAD <- deconvolute(gene_expr_matrix_PAD, "quantiseq", tumor = TRUE)
+quantiseq_AML <- deconvolute(gene_expr_matrix_AML, "quantiseq", tumor = TRUE)
+quantiseq_SCM <- deconvolute(gene_expr_matrix_SCM, "quantiseq", tumor = TRUE)
+quantiseq_PAD <- deconvolute(gene_expr_matrix_PAD, "quantiseq", tumor = TRUE)
 ```
 
 Plotting the cell fractions in a stacked barchart:
@@ -210,16 +210,16 @@ quantiseq_PAD %>%
     axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-Using MCP-counter provides scores in arbitrary units that are only comparable between samples, but not between cell-types. With the scores being in arbitrary units, the results are not useful for judging if a cell type is present in the sample, or not. However, we can compare the relative values between samples and relate them to the results we obtained earlier using quanTIseq.
+MCP-counter provides scores in arbitrary units that are only comparable between samples, but not between cell-types. With the scores being in arbitrary units, the results are not useful for judging if a cell type is present in the sample, or not. However, we can compare the relative values between samples and relate them to the results we obtained earlier using quanTIseq.
 
 ```{r}
-res_mcp_counter_AML <- deconvolute(gene_expr_df_AML, "mcp_counter")
-res_mcp_counter_SCM <- deconvolute(gene_expr_df_SCM, "mcp_counter")
-res_mcp_counter_PAD <- deconvolute(gene_expr_df_PAD, "mcp_counter")
+mcp_counter_AML <- deconvolute(gene_expr_df_AML, "mcp_counter")
+mcp_counter_SCM <- deconvolute(gene_expr_df_SCM, "mcp_counter")
+mcp_counter_PAD <- deconvolute(gene_expr_df_PAD, "mcp_counter")
 ```
 
 ```{r, fig.height=5, fig.width=12, warning=FALSE}
-res_mcp_counter_SCM %>%
+mcp_counter_SCM %>%
   gather(sample, score, -cell_type) %>%
   ggplot(aes(x = sample, y = score, color = cell_type)) +
   geom_point(size = 1) +
@@ -274,36 +274,48 @@ predict_all_genes <- function(gene_expr_df, deconvolution) {
 Use the function to make predicted gene expression matrix:
 
 ```{r}
-# Run the function - Takes a long time ro run so take a coffee break!
-predicted_gene_expr_AML <- predict_all_genes(gene_expr_df_AML, quantiseq_AML)
-predicted_gene_expr_PAD <- predict_all_genes(gene_expr_df_PAD, quantiseq_PAD)
-predicted_gene_expr_SCM <- predict_all_genes(gene_expr_df_SCM, quantiseq_SCM)
+# Making a subset of the gene expression matrix so the correction is only for those genes:
+gene_expr_df_AML_targets <- gene_expr_df_AML[rownames(gene_expr_df_AML) %in% target_list, ]
+gene_expr_df_PAD_targets <- gene_expr_df_PAD[rownames(gene_expr_df_PAD) %in% target_list, ]
+gene_expr_df_SCM_targets <- gene_expr_df_SCM[rownames(gene_expr_df_SCM) %in% target_list, ]
+
+predicted_gene_expr_AML <- predict_all_genes(gene_expr_df_AML_targets, quantiseq_AML)
+predicted_gene_expr_PAD <- predict_all_genes(gene_expr_df_PAD_targets, quantiseq_PAD)
+predicted_gene_expr_SCM <- predict_all_genes(gene_expr_df_SCM_targets, quantiseq_SCM)
 ```
 
 Plot the gene expression of all targets in the AML data set and compare predicted to original:
 
 ```{r}
-plt_predicted <- as_tibble(predicted_gene_expr_PAD) |>
-  mutate(gene = rownames(predicted_gene_expr_PAD)) |>
+plt_predicted <- as_tibble(predicted_gene_expr_SCM) |>
+  mutate(gene = rownames(predicted_gene_expr_SCM)) |>
   dplyr::select(gene, everything()) |>
-  filter(gene %in% target_list) |>
-  mutate(across(-1, ~ log2(. + 0.001))) |>
+  #filter(gene %in% target_list) |>
+  #mutate(across(-1, ~ log2(. + 0.001))) |>
   gather(sample, gene_expr, -gene) |>
   ggplot(aes(x=gene_expr, y=gene)) +
   geom_boxplot() +
+  labs(title = "Adjusted gene expression SCM",
+       x = "log2(tpm+0.001)",
+       y = "genes") + 
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") +
   theme(
     plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
     plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
     plot.caption = element_text(face = "italic"))
 
-plt_original <- as_tibble(gene_expr_matrix_PAD) |>
-  mutate(gene = rownames(gene_expr_matrix_PAD)) |>
+plt_original <- as_tibble(gene_expr_df_SCM_targets) |>
+  mutate(gene = rownames(gene_expr_df_SCM_targets)) |>
   dplyr::select(gene, everything()) |>
-  filter(gene %in% target_list) |>
-  mutate(across(-1, ~ log2(. + 0.001))) |>
+  #filter(gene %in% target_list) |>
+  #mutate(across(-1, ~ log2(. + 0.001))) |>
   gather(sample, gene_expr, -gene) |>
   ggplot(aes(x=gene_expr, y=gene)) +
   geom_boxplot() +
+  labs(title = "Original gene expression SCM",
+       x = "log2(tpm+0.001)",
+       y = "genes") +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") +
   theme(
     plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
     plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
