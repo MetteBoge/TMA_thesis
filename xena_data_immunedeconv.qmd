@@ -10,9 +10,7 @@ library(stringr)
 library(clusterProfiler)
 library(org.Hs.eg.db)
 library(cowplot)
-#library(biomaRt)
-#library(BiocFileCache)
-#library(BiocManager)
+library(ggpubr)
 ```
 
 ## Download dataset:
@@ -21,10 +19,10 @@ library(cowplot)
 cohort = "TCGA_PANCAN"
 file_path <- "Data/XenaBrowser/"
 dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
-data_type = "gene_expression_RNAseq_tpm"
+data_type = "phenotype_metadata"
 
 ## Specify the URL of the file you want to download
-url <- "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/tcga_RSEM_gene_tpm.gz"
+url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/Survival_SupplementalTable_S1_20171025_xena_sp"
 
 # Specify the file name and location where you want to save the file on your computer
 file_name_data <- paste0(cohort, "_", data_type)
@@ -43,8 +41,10 @@ if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
 ## Import data:
 
 ```{r}
-df_data <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")) 
+df_gene_expr <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")) 
 df_phenotype_disease <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
+df_somatic_mutation <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
+df_phenotype_meta <- as_tibble(read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t"))
 ```
 
 ## Data wrangling:
@@ -53,43 +53,50 @@ Extract sample IDs for specific cancer types:
 
 ```{r}
 ## Get sample IDs for AML:
-AML_samples <- as_tibble(df_phenotype_disease) |>
-  filter(X_primary_disease == "acute myeloid leukemia") |>
+LAML_samples <- df_phenotype_meta |>
+  filter(cancer.type.abbreviation == "LAML") |>
   dplyr::select(sample)
 
-SCM_samples <- as_tibble(df_phenotype_disease) |>
-  filter(X_primary_disease == "skin cutaneous melanoma") |>
+SKCM_samples <- df_phenotype_meta |>
+  filter(cancer.type.abbreviation == "SKCM") |>
   dplyr::select(sample)
 
-PAD_samples <- as_tibble(df_phenotype_disease) |>
-  filter(X_primary_disease == "pancreatic adenocarcinoma") |>
+PAAD_samples <- df_phenotype_meta |>
+  filter(cancer.type.abbreviation == "PAAD") |>
   dplyr::select(sample)
 
-disease_list <- df_phenotype_disease |>
-  distinct(X_primary_disease)
+HNSC_samples <- df_phenotype_meta |>
+  filter(cancer.type.abbreviation == "HNSC") |>
+  dplyr::select(sample)
 ```
 
 Filter the expression data frame to include only samples from selected cancer type:
 
 ```{r}
 ## Get only samples from AML cancer:
-df_data_gene_expr_AML <- df_data |>
-  rename_with(~ str_replace_all(., "\\.", "-")) |>
-  dplyr::select(sample, any_of(AML_samples$sample)) |>
-  dplyr::rename(gene = sample) |>
-  mutate(gene = str_replace(gene, "\\..*", ""))
+df_gene_expr_LAML <- df_gene_expr |>
+  #rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(gene, any_of(LAML_samples$sample)) 
+  #dplyr::rename(gene = sample) |>
+  #mutate(gene = str_replace(gene, "\\..*", ""))
 
-df_data_gene_expr_SCM <- df_data |>
-  rename_with(~ str_replace_all(., "\\.", "-")) |>
-  dplyr::select(sample, any_of(SCM_samples$sample)) |>
-  dplyr::rename(gene = sample) |>
-  mutate(gene = str_replace(gene, "\\..*", ""))
+df_gene_expr_SKCM <- df_gene_expr |>
+  #rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(gene, any_of(SKCM_samples$sample)) 
+  #dplyr::rename(gene = sample) |>
+  #mutate(gene = str_replace(gene, "\\..*", ""))
 
-df_data_gene_expr_PAD <- df_data |>
-  rename_with(~ str_replace_all(., "\\.", "-")) |>
-  dplyr::select(sample, any_of(PAD_samples$sample)) |>
-  dplyr::rename(gene = sample) |>
-  mutate(gene = str_replace(gene, "\\..*", ""))
+df_gene_expr_PAAD <- df_gene_expr |>
+  #rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(gene, any_of(PAAD_samples$sample)) 
+  #dplyr::rename(gene = sample) |>
+  #mutate(gene = str_replace(gene, "\\..*", ""))
+
+df_gene_expr_HNSC <- df_gene_expr |>
+  #rename_with(~ str_replace_all(., "\\.", "-")) |>
+  dplyr::select(gene, any_of(HNSC_samples$sample)) 
+  #dplyr::rename(gene = sample) |>
+  #mutate(gene = str_replace(gene, "\\..*", ""))
 ```
 
 ```{r}
@@ -105,52 +112,66 @@ Convert Ensemble IDs to HGNC symbols:
 ```
 
 ```{r}
-gene_expr_df_AML <- as_tibble(gene_mapping) |>
+df_gene_expr_LAML <- as_tibble(gene_mapping) |>
   dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
-  inner_join(df_data_gene_expr_AML, by="gene") |>
+  inner_join(df_gene_expr_LAML, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
   #mutate(across(-1, as.numeric)) |>
   #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
-gene_expr_df_SCM <- as_tibble(gene_mapping) |>
+df_gene_expr_SKCM <- as_tibble(gene_mapping) |>
   dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
-  inner_join(df_data_gene_expr_SCM, by="gene") |>
+  inner_join(df_gene_expr_SKCM, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
   #mutate(across(-1, as.numeric)) |>
   #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
 
-gene_expr_df_PAD <- as_tibble(gene_mapping) |>
+df_gene_expr_PAAD <- as_tibble(gene_mapping) |>
   dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
-  inner_join(df_data_gene_expr_PAD, by="gene") |>
+  inner_join(df_gene_expr_PAAD, by="gene") |>
   dplyr::select(symbol, everything(), -gene) |>
   distinct(symbol, .keep_all = TRUE) |>
   #mutate(across(-1, as.numeric)) |>
   #mutate(across(-1, ~ (2^.x) - 0.001)) |>
   column_to_rownames(var = "symbol")
+
+df_gene_expr_HNSC <- as_tibble(gene_mapping) |>
+  dplyr::rename(gene = ENSEMBL, symbol = SYMBOL) |>
+  inner_join(df_gene_expr_HNSC, by="gene") |>
+  dplyr::select(symbol, everything(), -gene) |>
+  distinct(symbol, .keep_all = TRUE) |>
+  #mutate(across(-1, as.numeric)) |>
+  #mutate(across(-1, ~ (2^.x) - 0.001)) |>
+  column_to_rownames(var = "symbol")
+
 ```
 
 Convert the gene expression data frame as a matrix:
 
 ```{r}
-gene_expr_matrix_AML <- as.matrix(gene_expr_df_AML)
-gene_expr_matrix_SCM <- as.matrix(gene_expr_df_SCM)
-gene_expr_matrix_PAD <- as.matrix(gene_expr_df_PAD)
+gene_expr_matrix_LAML <- as.matrix(df_gene_expr_LAML)
+gene_expr_matrix_SKCM <- as.matrix(df_gene_expr_SKCM)
+gene_expr_matrix_PAAD <- as.matrix(df_gene_expr_PAAD)
+gene_expr_matrix_HNSC <- as.matrix(df_gene_expr_HNSC)
 ```
 
-## Deconvolution:
+## Immune Deconvolution:
+
+### ESTIMATE:
 
 Using ESTIMATE which computes a score for the tumoral, immune and stromal components and the fraction of tumor purity.
 
 <https://bioinformatics.mdanderson.org/estimate/>
 
 ```{r}
-estimate_AML = deconvolute_estimate(gene_expr_matrix_AML)
-estimate_SCM = deconvolute_estimate(gene_expr_matrix_SCM)
-estimate_PAD = deconvolute_estimate(gene_expr_matrix_PAD)
+estimate_LAML = deconvolute_estimate(gene_expr_matrix_LAML)
+estimate_SKCM = deconvolute_estimate(gene_expr_matrix_SKCM)
+estimate_PAAD = deconvolute_estimate(gene_expr_matrix_PAAD)
+estimate_HNSC = deconvolute_estimate(gene_expr_matrix_HNSC)
 ```
 
 Plot estimates as a boxplot:
@@ -168,14 +189,17 @@ estimate_PAD |>
   labs(x = "Scores", y = "Count", title = "Distribution of Scores by ESTIMATE in Pancreatic Adenocarcinoma")
 ```
 
+### QuanTIseq:
+
 Using quanTIseq to estimate immune cell fractions:
 
 <https://icbi.i-med.ac.at/software/quantiseq/doc/index.html>
 
 ```{r}
-quantiseq_AML <- deconvolute(gene_expr_matrix_AML, "quantiseq", tumor = TRUE)
-quantiseq_SCM <- deconvolute(gene_expr_matrix_SCM, "quantiseq", tumor = TRUE)
-quantiseq_PAD <- deconvolute(gene_expr_matrix_PAD, "quantiseq", tumor = TRUE)
+quantiseq_LAML <- deconvolute(gene_expr_matrix_LAML, "quantiseq", tumor = TRUE)
+quantiseq_SKCM <- deconvolute(gene_expr_matrix_SKCM, "quantiseq", tumor = TRUE)
+quantiseq_PAAD <- deconvolute(gene_expr_matrix_PAAD, "quantiseq", tumor = TRUE)
+quantiseq_HNSC <- deconvolute(gene_expr_matrix_HNSC, "quantiseq", tumor = TRUE)
 ```
 
 Plotting the cell fractions in a stacked barchart:
@@ -210,6 +234,8 @@ quantiseq_PAD %>%
     axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
+### MCP-counter:
+
 MCP-counter provides scores in arbitrary units that are only comparable between samples, but not between cell-types. With the scores being in arbitrary units, the results are not useful for judging if a cell type is present in the sample, or not. However, we can compare the relative values between samples and relate them to the results we obtained earlier using quanTIseq.
 
 ```{r}
@@ -232,7 +258,7 @@ mcp_counter_SCM %>%
   labs(title = "Skin Cutaneous Melanoma")
 ```
 
-Predict cell population-specific gene expression 
+### Predict cell population-specific gene expression
 
 ```{r}
 # Define a function to perform regression and predict gene expression for all genes
@@ -275,13 +301,15 @@ Use the function to make predicted gene expression matrix:
 
 ```{r}
 # Making a subset of the gene expression matrix so the correction is only for those genes:
-gene_expr_df_AML_targets <- gene_expr_df_AML[rownames(gene_expr_df_AML) %in% target_list, ]
-gene_expr_df_PAD_targets <- gene_expr_df_PAD[rownames(gene_expr_df_PAD) %in% target_list, ]
-gene_expr_df_SCM_targets <- gene_expr_df_SCM[rownames(gene_expr_df_SCM) %in% target_list, ]
+gene_expr_df_LAML_targets <- df_gene_expr_LAML[rownames(df_gene_expr_LAML) %in% target_list, ]
+gene_expr_df_PAAD_targets <- df_gene_expr_PAAD[rownames(df_gene_expr_PAAD) %in% target_list, ]
+gene_expr_df_SKCM_targets <- df_gene_expr_SKCM[rownames(df_gene_expr_SKCM) %in% target_list, ]
+gene_expr_df_HNSC_targets <- df_gene_expr_HNSC[rownames(df_gene_expr_HNSC) %in% target_list, ]
 
-predicted_gene_expr_AML <- predict_all_genes(gene_expr_df_AML_targets, quantiseq_AML)
-predicted_gene_expr_PAD <- predict_all_genes(gene_expr_df_PAD_targets, quantiseq_PAD)
-predicted_gene_expr_SCM <- predict_all_genes(gene_expr_df_SCM_targets, quantiseq_SCM)
+predicted_gene_expr_LAML <- predict_all_genes(gene_expr_df_LAML_targets, quantiseq_LAML)
+predicted_gene_expr_PAAD <- predict_all_genes(gene_expr_df_PAAD_targets, quantiseq_PAAD)
+predicted_gene_expr_SKCM <- predict_all_genes(gene_expr_df_SKCM_targets, quantiseq_SKCM)
+predicted_gene_expr_HNSC <- predict_all_genes(gene_expr_df_HNSC_targets, quantiseq_HNSC)
 ```
 
 Plot the gene expression of all targets in the AML data set and compare predicted to original:
@@ -326,12 +354,29 @@ plt_original <- as_tibble(gene_expr_df_SCM_targets) |>
 plot_grid(plt_predicted, plt_original, labels = c('A', 'B'), label_size = 12)
 ```
 
-```{r}
-df_data_long |>
-  filter(gene %in% target_list_ENSG) |>
-  inner_join(df_phenotype_disease, by=c("sample"))
-```
+## Somatic mutation analysis:
 
 ```{r}
-estimate <- immunedeconv::deconvolute_estimate(gene_expr_matrix)
+# Make one dataframe in long format of the adjusted gene expression:
+gene_expr_long_LAML <- as_tibble(predicted_gene_expr_AML) |>
+  mutate(gene = rownames(predicted_gene_expr_AML)) |>
+  dplyr::select(gene, everything()) |>
+  gather(sample, gene_expr, -gene) |> 
+  mutate(cancer_type = "LAML")
+
+gene_expr_long_PAAD <- as_tibble(predicted_gene_expr_PAD) |>
+  mutate(gene = rownames(predicted_gene_expr_PAD)) |>
+  dplyr::select(gene, everything()) |>
+  gather(sample, gene_expr, -gene) |> 
+  mutate(cancer_type = "PAAD")
+
+gene_expr_long_SKCM <- as_tibble(predicted_gene_expr_SCM) |>
+  mutate(gene = rownames(predicted_gene_expr_SCM)) |>
+  dplyr::select(gene, everything()) |>
+  gather(sample, gene_expr, -gene) |> 
+  mutate(cancer_type = "SKCM")
+
+full_df <- bind_rows(gene_expr_long_LAML, 
+                     gene_expr_long_PAAD, 
+                     gene_expr_long_SKCM)
 ```
