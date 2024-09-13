@@ -89,6 +89,7 @@ if (!(file.exists(paste(file_path, file_name_pheno2, ".tsv", sep = "")))){
 
 ```{r}
 df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+
 df_st_pd <- read.csv(paste(file_path, file_name_pheno1, ".tsv", sep = ""),sep = "\t")
 df_clin_pd <- read.csv(paste(file_path, file_name_pheno2, ".tsv", sep = ""),sep = "\t")
 
@@ -136,14 +137,47 @@ cancer_types_list <- c("skin cutaneous melanoma",
 
 cancer_type <- "pancreatic adenocarcinoma"
 
-samples_of_int <- df_st_pd %>% 
-  filter(X_primary_disease %in% cancer_type &
+samples_ids_PAAD <- df_st_pd %>% 
+  filter(X_primary_disease %in% "pancreatic adenocarcinoma" &
+           sample %in% colnames(df_data)) %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+samples_ids_LAML <- df_st_pd %>% 
+  filter(X_primary_disease %in% "acute myeloid leukemia" &
+           sample %in% colnames(df_data)) %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+samples_ids_HNSC <- df_st_pd %>% 
+  filter(X_primary_disease %in% "head & neck squamous cell carcinoma" &
+           sample %in% colnames(df_data)) %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+samples_ids_SKCM <- df_st_pd %>% 
+  filter(X_primary_disease %in% "skin cutaneous melanoma" &
            sample %in% colnames(df_data)) %>% 
   dplyr::select(sample) %>% 
   unlist(use.names = FALSE)
 
 df_PAAD <- df_data %>% 
-  dplyr::select(sample, samples_of_int) %>% 
+  dplyr::select(sample, all_of(samples_ids_PAAD)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+df_LAML <- df_data %>% 
+  dplyr::select(sample, all_of(samples_ids_LAML)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+df_HNSC <- df_data %>% 
+  dplyr::select(sample, all_of(samples_ids_HNSC)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+df_SKCM <- df_data %>% 
+  dplyr::select(sample, all_of(samples_ids_SKCM)) %>% 
   mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
   relocate(sample, gene_ensg_shrt)
 ```

@@ -1,0 +1,813 @@
+---
+title: "xena_data_isoforms"
+format: html
+editor: visual
+---
+
+## Load packages and targets
+
+```{r}
+library(tidyverse)
+library(R.utils)
+library(arrow)
+library(biomaRt)
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+
+```
+
+## Download data
+
+```{r}
+# Cohort:
+cohort = "TCGA_PANCAN"
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+```
+
+```{r}
+## Data
+data_type = "transcript_expression_RNAseq_RSEM_tpm"
+
+# Specify the URL of the file you want to download
+url <- "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/tcga_rsem_isoform_tpm.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_data <- paste0(cohort, "_", data_type)
+
+options(timeout=1000)
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  # Call the download.file() function, passing in the URL and file name/location as arguments
+  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+}
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+## sampleType_primaryDisease
+data_type = "sampleType_primaryDisease"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/TCGA_phenotype_denseDataOnlyDownload.tsv.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno1 <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path, file_name_pheno1, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_pheno1, ".tsv", sep = "")))){
+  download.file(url, paste(file_path, file_name_pheno1, ".tsv", sep = ""), mode = "wb")
+}
+if (!(file.exists(paste(file_path, file_name_pheno1, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_pheno1, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+## curated_clinical_data
+data_type = "curated_clinical_data"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/Survival_SupplementalTable_S1_20171025_xena_sp"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno2 <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path, file_name_pheno2, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_pheno2, ".tsv", sep = "")))){
+  download.file(url, paste(file_path, file_name_pheno2, ".tsv", sep = ""), mode = "wb")
+}
+if (!(file.exists(paste(file_path, file_name_pheno2, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_pheno2, ".tsv.gz", sep = ""))
+}
+```
+
+### Read phenotype data
+
+```{r}
+df_st_pd <- read.csv(paste(file_path, file_name_pheno1, ".tsv", sep = ""),sep = "\t") 
+df_clin_pd <- read.csv(paste(file_path, file_name_pheno2, ".tsv", sep = ""),sep = "\t")  
+
+df_pheno <- df_clin_pd %>%    
+  full_join(df_st_pd, by = "sample")  
+```
+
+```{r}
+sample_id_PAAD <- df_pheno %>% 
+  filter(cancer.type.abbreviation == "PAAD") %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+sample_id_LAML <- df_pheno %>% 
+  filter(cancer.type.abbreviation == "LAML") %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+sample_id_SKCM <- df_pheno %>% 
+  filter(cancer.type.abbreviation == "SKCM") %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+sample_id_HNSC <- df_pheno %>% 
+  filter(cancer.type.abbreviation == "HNSC") %>% 
+  dplyr::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+```
+
+```{r}
+# List of patients with more than one sample. Options to compare gene expression in same individual but from different tissue (e.g. tumor vs normal tissue same patient) 
+#pat_morethan1sample <- df_pheno %>%    
+#  group_by(X_PATIENT) %>%    
+#  summarise(n=n()) %>%   
+#  filter(n>1 & n < 200) %>%    
+#  dplyr::select(X_PATIENT) %>%    
+#  unlist(use.names = F)  
+#df_pheno %>%  
+#  filter(X_PATIENT %in% pat_morethan1sample)
+```
+
+### 
+
+### Read transcript data
+
+```{r}
+# Read in chunks and add rownames as a column
+
+data_file <- paste(file_path, file_name_data, ".tsv.gz", sep = "")
+chunk_size <- 4000
+
+read_chunk <- function(file, chunk_size) {
+  con <- file(file, "r")
+  on.exit(close(con))
+  repeat {
+    chunk <- read_tsv(con, n_max = chunk_size)
+    if (nrow(chunk) == 0) break
+    chunk <- chunk %>% mutate(rownames = row_number())
+    # Process chunk...
+  }
+}
+
+read_chunk(data_file, chunk_size)
+
+```
+
+```{r}
+# Load the list of transcripts (was row name in file, which is not preserved when loading data with arrow)
+transcripts_arrowdf <- open_dataset(paste0(file_path, "TCGA_PANCAN_transcript_expression_RNAseq_RSEM_transcript_list.txt"), format = "text")
+transcripts_list <- read_csv(paste0(file_path, "TCGA_PANCAN_transcript_expression_RNAseq_RSEM_transcript_list.txt"))
+
+transcripts_list_2 <- transcripts_list %>% 
+  mutate(transcript_id = gsub("\\..*", "", transcript_id))
+
+
+transcripts_arrowdf %>% glimpse()
+```
+
+```{r}
+df_data <- open_tsv_dataset(paste(file_path, file_name_data, ".tsv", sep = "") )
+
+
+transcript_ids_file <- paste0(file_path, "tmp.csv")
+#data_file <- tempfile()
+write_parquet(transcripts_arrowdf, transcript_ids_file)
+
+write_csv(transcripts_list_2, transcript_ids_file)
+#write_parquet(df_data, data_file)
+
+files_comb <- c(transcript_ids_file, paste(file_path, file_name_data, ".tsv", sep = ""))
+
+df_data_comb <- open_tsv_dataset(files_comb)
+
+# New updated list of sample ids in the transcript data:
+sample_id_PAAD <- intersect(sample_id_PAAD, colnames(df_data))
+sample_id_HNSC <- intersect(sample_id_HNSC, colnames(df_data))
+sample_id_LAML <- intersect(sample_id_LAML, colnames(df_data))
+sample_id_SKCM <- intersect(sample_id_SKCM, colnames(df_data))
+
+df_PAAD <- df_data %>% 
+  dplyr::select(all_of(sample_id_PAAD)) %>% 
+  collect()
+
+
+
+# Change format of colnames to have "-" instead of ".": 
+#colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
+```
+
+### Subset and wrangle data
+
+```{r}
+geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
+geneName_ensg <- geneName_ensg %>% 
+  rename(gene_ensg_shrt = converted_alias) %>% 
+  select(name, gene_ensg_shrt)
+
+# geneName_ensg
+```
+
+```{r}
+# Connect to the Ensembl Biomart
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Example list of ENSG gene IDs
+gene_list <- geneName_ensg %>% 
+  dplyr::select(gene_ensg_shrt) %>% 
+  unlist(use.names = FALSE)
+
+# Query biomaRt for transcript IDs
+transcripts <- getBM(
+  attributes = c("ensembl_gene_id", "ensembl_transcript_id"),
+  filters = "ensembl_gene_id",
+  values = gene_list,
+  mart = ensembl
+)
+
+```
+
+```{r}
+
+
+
+
+transcript_list
+```
+
+## Adjust for cell type
+
+```{r}
+#install.packages("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/immunedeconv-master/immunedeconv-master/", repos = NULL, type = "source")
+
+library(immunedeconv)
+library(tidyverse)
+library(biomaRt)
+library(knitr)
+library(patchwork)
+```
+
+```{r}
+# Change ENSG to gene names: 
+mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+genes <- df_PAAD$gene_ensg_shrt
+
+G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
+
+# Add gene names and remove duplicates
+df_PAAD <- df_PAAD %>% 
+  left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
+  relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
+  filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
+  distinct(hgnc_symbol, .keep_all = TRUE) # Keep only ONE of duplicated genes 
+```
+
+Use ESTIMATE to compute a score for tumoral, immune and stromal components and the fraction of tumor purity.
+
+Use quantiseq to determine cell compostition for each sample.
+
+```{r}
+gExp_mat_PAAD <- df_PAAD %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  column_to_rownames(var = "hgnc_symbol") %>% 
+  as.matrix() 
+
+# Estimate purity of sample. How much is stromal, immune and tumor from sample. 
+estimate_PAAD <- deconvolute_estimate(gExp_mat_PAAD)
+
+# Determine cell composition in samples. Using quantiseq method. 
+quantiseq_PAAD <- immunedeconv::deconvolute(gExp_mat_PAAD, method = "quantiseq",
+                                            tumor=TRUE)
+```
+
+```{r}
+df_PAAD
+```
+
+### Adjust with linear regression
+
+```{r}
+# Define a function to perform regression and predict gene expression for all genes
+adjust_cell_type_lm <- function(gene_expr_df, deconvolution, targets) {
+  # Ensure deconvolution is a data frame and extract relevant data
+  deconvolution <- as_tibble(deconvolution)
+  cell_types <- deconvolution$cell_type
+  deconvolution_samples <- deconvolution %>% 
+    dplyr::select(-cell_type)  # Remove the cell types column
+
+  gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% targets,]
+  
+  # Create an empty matrix to store predictions
+  predicted_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+  rownames(predicted_matrix) <- rownames(gene_expr_df)
+  colnames(predicted_matrix) <- colnames(gene_expr_df)
+  
+  # Iterate over each gene
+  for (gene in rownames(gene_expr_df)) {
+    # Extract gene expression values for the gene of interest
+    gene_expression <- as.numeric(gene_expr_df[gene, ])
+    
+    # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+    if (length(gene_expression) == ncol(deconvolution_samples)) {
+      # Perform linear regression
+      model <- lm(gene_expression ~ t(deconvolution_samples))
+      
+      # Predict gene expression
+      predicted_expression <- predict(model, newdata = as.data.frame(t(deconvolution_samples)))
+      
+      # Store predictions in the matrix
+      predicted_matrix[gene, ] <- predicted_expression
+    } else {
+      warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+    }
+  }
+  
+  # Put gene names as column and return as tibble
+  predicted_matrix <- cbind(rownames(predicted_matrix), predicted_matrix)
+  colnames(predicted_matrix)[1] <- "genes"
+  
+  out_df <- as_tibble(predicted_matrix) %>% 
+    mutate(across(-genes, as.numeric))
+  
+  return(out_df)
+}
+```
+
+```{r}
+
+samples_of_int_tumor <- df_st_pd %>% 
+  filter(sample %in% samples_of_int, 
+         sample_type %in% "Primary Tumor") %>% 
+  dplyr:::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+samples_of_int_normal <- df_st_pd %>% 
+  filter(sample %in% samples_of_int, 
+         sample_type %in% "Solid Tissue Normal") %>% 
+  dplyr:::select(sample) %>% 
+  unlist(use.names = FALSE)
+
+
+
+adj_PAAD_normal <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD[,samples_of_int_normal], 
+                     deconvolution = quantiseq_PAAD[, c("cell_type", samples_of_int_normal)], 
+                     targets = target_list)
+
+adj_PAAD_tumor <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD[,samples_of_int_tumor], 
+                     deconvolution = quantiseq_PAAD[, c("cell_type", samples_of_int_tumor)], 
+                     targets = target_list)
+
+adj_PAAD <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD,
+                     deconvolution = quantiseq_PAAD,
+                     targets = target_list)
+
+adj_PAAD
+
+adj_PAAD_tumor
+```
+
+### Plots and tables
+
+```{r}
+# Boxplot of estimates
+estimate_PAAD |>
+  rownames_to_column(var = "estimates") |>
+  pivot_longer(cols = -estimates,
+               names_to = "sample",
+               values_to = "scores") |>
+  ggplot(aes(x=estimates, y=scores)) + 
+  geom_boxplot() 
+```
+
+```{r}
+# Plot cell compostition
+
+quantiseq_PAAD %>%
+  gather(sample, fraction, -cell_type) %>%
+  ggplot(aes(x=cell_type, y=fraction)) + 
+  geom_boxplot() +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Distribution of cell populations",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Cell types",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+ylim_val = c(-11,11)
+
+# Plot gene expression before and after adjusting for cell composition
+ori_geneexp_bp <- df_PAAD %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  rename(genes=hgnc_symbol) %>% 
+  filter(genes %in% target_list) %>% 
+  pivot_longer(cols= -genes,
+               names_to = "sample",
+               values_to = "exp") %>% 
+  ggplot(aes(x=genes, y=exp)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Original gene expression",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = ylim_val)
+
+adj_geneexp_bp <- adj_PAAD %>% 
+  pivot_longer(cols= -genes,
+               names_to = "sample",
+               values_to = "exp") %>% 
+  mutate(exp = as.numeric(exp)) %>% 
+  ggplot(aes(x=genes, y=exp)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Adjusted to cell type composition",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = ylim_val)
+
+ori_geneexp_bp + adj_geneexp_bp
+```
+
+```{r}
+# Take sample type into account. Primary tumor vs Normal tissue, etc.
+ylim_val = c(-11,11)
+
+adj_geneexp_tumor_bp <- adj_PAAD_tumor %>% 
+  pivot_longer(cols= -genes,
+               names_to = "sample",
+               values_to = "exp") %>% 
+  mutate(exp = as.numeric(exp)) %>% 
+  ggplot(aes(x=genes, y=exp)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Primary Tumor",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = ylim_val)
+
+adj_geneexp_normal_bp <- adj_PAAD_normal %>% 
+  pivot_longer(cols= -genes,
+               names_to = "sample",
+               values_to = "exp") %>% 
+  mutate(exp = as.numeric(exp)) %>% 
+  ggplot(aes(x=genes, y=exp)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Solid Normal Tissue",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = ylim_val)
+
+adj_geneexp_tumor_bp + adj_geneexp_normal_bp
+```
+
+```{r}
+df_PAAD
+```
+
+## Phenotypic relations, cancer specific
+
+Take gene_exp data used from before and load in the phenotype data for the studies. Load survival data as well.
+
+One study at a time, look at gene expression of targets and correlation to phenotypes.
+
+```{r}
+# Merge gene exp data with phenotype data
+df_pheno_PAAD <- df_pheno %>% 
+  dplyr::filter(cancer.type.abbreviation == "PAAD" &
+           sample %in% colnames(adj_PAAD)) %>% 
+  dplyr::select_if(~!(all(is.na(.)) | all(. == ""))) %>% # Remove empty columns 
+  mutate(survival = ifelse(cause_of_death == "Pancreatic Cancer", "dead", "alive"),
+         ajcc_pathologic_tumor_stage = ifelse(grepl("Stage", ajcc_pathologic_tumor_stage), ajcc_pathologic_tumor_stage, NaN))
+
+# Join data and make factors for later plotting and statistical analysis
+df_data_pheno_PAAD <- adj_PAAD_tumor %>% 
+  pivot_longer(cols=-genes,
+               names_to = "sample", 
+               values_to = "exp") %>% 
+  dplyr::full_join(df_pheno_PAAD, by = "sample") %>% 
+  mutate(histological_grade = factor(histological_grade, 
+                                      levels = c("GX", "G1", "G2", "G3", "G4"), 
+                                      ordered= TRUE),
+         treatment_outcome_first_course = factor(treatment_outcome_first_course,
+                                                 levels=c("Complete Remission/Response", 
+                                                          "Partial Remission/Response",
+                                                          "Stable Disease", 
+                                                          "Progressive Disease"),
+                                                 ordered=TRUE))
+  
+
+```
+
+### Plots
+
+#### Boxplots
+
+```{r}
+# Survival (cancer being cause of death)
+df_data_pheno_PAAD %>% 
+  dplyr::select(genes, sample, exp, survival) %>% 
+  ggplot(aes(x=genes, y=exp, fill=survival)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "Comparing alive vs dead (cancer being cause)",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+n_df <- df_data_pheno_PAAD %>% 
+  distinct(sample, .keep_all = TRUE) %>% # Keep only ONE of duplicated samplenames
+  filter(histological_grade != "GX") %>%  
+  group_by(histological_grade) %>% 
+  summarize(n=n())
+
+# Looking at relation to histological grade
+df_data_pheno_PAAD %>% 
+ # filter(genes == "SIGLEC15") %>% 
+  filter(histological_grade != "GX") %>% 
+  left_join(n_df, by="histological_grade") %>%
+  mutate(histological_grade = paste0(histological_grade, " (n=", n, ")")) %>%
+  dplyr::select(genes, sample, exp, histological_grade) %>% 
+  ggplot(aes(x=genes, y=exp, fill=histological_grade)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+n_df <- df_data_pheno_PAAD %>% 
+  distinct(sample, .keep_all = TRUE) %>% # Keep only ONE of duplicated samplenames
+  filter((grepl("Disease|Remission", treatment_outcome_first_course))) %>% 
+  group_by(treatment_outcome_first_course) %>% 
+  summarize(n=n())
+
+df_data_pheno_PAAD %>% 
+  filter((grepl("Disease|Remission", treatment_outcome_first_course))) %>% 
+  left_join(n_df, by="treatment_outcome_first_course") %>% 
+  mutate(treatment_outcome_first_course = paste0(treatment_outcome_first_course, " (n=", n, ")")) %>% 
+  dplyr::select(genes, sample, exp, treatment_outcome_first_course) %>% 
+  ggplot(aes(x=genes, y=exp, fill=treatment_outcome_first_course)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+n_df <- df_data_pheno_PAAD %>% 
+  distinct(sample, .keep_all = TRUE) %>% # Keep only ONE of duplicated samplenames
+  filter(!(grepl("Unknown|Not", race))) %>% 
+  group_by(race) %>% 
+  summarize(n=n())
+
+df_data_pheno_PAAD %>% 
+  filter(!(grepl("Unknown|Not", race))) %>% 
+  left_join(n_df, by="race") %>% 
+  mutate(race = paste0(race, " (n=", n, ")")) %>% 
+  dplyr::select(genes, sample, exp, race) %>%
+  ggplot(aes(x=genes, y=exp, fill=race)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+```{r}
+n_df <- df_data_pheno_PAAD %>% 
+  distinct(sample, .keep_all = TRUE) %>% # Keep only ONE of duplicated samplenames
+  group_by(gender) %>% 
+  summarize(n=n())
+
+df_data_pheno_PAAD %>% 
+  left_join(n_df, by="gender") %>% 
+  mutate(gender = paste0(gender, " (n=", n, ")")) %>% 
+  dplyr::select(genes, sample, exp, gender) %>%
+  ggplot(aes(x=genes, y=exp, fill=gender)) + 
+  geom_boxplot() +
+  geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+  labs(
+    title = "Pancreatic Adenocarcinoma",
+    subtitle = "",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Genes",
+    y = "Fraction"
+  ) +
+  theme(
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+
+#### Linear regression
+
+```{r}
+gene_of_interes <- "IDO1"
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interes) %>% 
+  ggplot(aes(x=age_at_initial_pathologic_diagnosis, 
+             y=exp)) +
+  geom_point() +
+  geom_smooth(method="lm", se = TRUE)
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interes) %>% 
+  lm(exp ~ age_at_initial_pathologic_diagnosis, .) %>% 
+  summary()
+```
+
+```{r}
+gene_of_interes <- "SIGLEC15"
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interes) %>% 
+  ggplot(aes(x=DSS.time, 
+             y=exp)) +
+  geom_point() +
+  geom_smooth(method="lm", se = TRUE)
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interes) %>% 
+  lm(exp ~ DSS.time, .) %>% 
+  summary()
+```
+
+```{r}
+gene_of_interest <- "ARG2"
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interest) %>% 
+  ggplot(aes(x=PFI.time, 
+             y=exp)) +
+  geom_point() +
+  geom_smooth(method="lm", se = TRUE)
+
+df_data_pheno_PAAD %>% 
+  filter(genes == gene_of_interest) %>% 
+  lm(exp ~ PFI.time, .) %>% 
+  summary()
+```
+
+#### Kaplan-Meier estimator
+
+```{r}
+library(survival)
+library(survminer)
+```
+
+```{r}
+gene_of_interest <- "SIGLEC15" #"PDCD1LG2"
+
+surv_df <- df_data_pheno_PAAD %>% 
+  dplyr::filter(genes == gene_of_interest) %>% 
+  mutate(gene_regulation = ifelse(exp>0, "upregulated", "downregulated")) %>% 
+  dplyr::select(OS, OS.time, gene_regulation)
+
+km_fit <- survfit(Surv(OS.time, OS) ~ gene_regulation, data = surv_df)
+
+ggsurvplot(km_fit, data=surv_df, risk.table = FALSE, conf.int = TRUE)
+```
+
+```{r}
+# Kaplan-Meier. Instead of using up- or downregulated, use exp over or under mean
+
+gene_of_interest <- "TGFB1" #"PDCD1LG2"
+
+surv_df <- df_data_pheno_PAAD %>% 
+  dplyr::filter(genes == gene_of_interest) %>% 
+  mutate(gene_regulation = ifelse(exp>mean(exp), "above_avg", "below_avg")) %>% 
+  dplyr::select(OS, OS.time, gene_regulation)
+
+km_fit <- survfit(Surv(OS.time, OS) ~ gene_regulation, data = surv_df)
+
+ggsurvplot(km_fit, data=surv_df, risk.table = FALSE, conf.int = TRUE)
+```
+
+### Statistical test
+
+```{r}
+colnames(df_data_pheno_PAAD)
+```
+
+```{r}
+df_data_pheno_PAAD %>% 
+  t.test(exp ~ gender, .)
+
+# Categorical with more than 2 categories: ANOVA
+df_data_pheno_PAAD %>% 
+  filter(genes == "SIGLEC15") %>% 
+  aov(exp ~ histological_grade, .) %>% 
+  summary()
+
+
+df_data_pheno_PAAD %>% 
+  filter((grepl("Disease|Remission", treatment_outcome_first_course))) %>% 
+  filter(genes == "IDO1") %>% 
+  aov(exp ~ treatment_outcome_first_course, .) %>% 
+  summary()
+```
+
+```{r}
+# Continous phenotype
+df_data_pheno_PAAD_geneSepc <- df_data_pheno_PAAD %>% 
+  filter(genes == "SIGLEC15")
+cor.test(df_data_pheno_PAAD_geneSepc$exp,
+         df_data_pheno_PAAD_geneSepc$age_at_initial_pathologic_diagnosis, 
+         method="pearson")
+
+df_data_pheno_PAAD_geneSepc <- df_data_pheno_PAAD %>% 
+  filter(genes == "ARG2")
+cor.test(df_data_pheno_PAAD_geneSepc$exp,
+         df_data_pheno_PAAD_geneSepc$PFI.time, 
+         method="pearson")
+```
