@@ -4,15 +4,33 @@ format: html
 editor: visual
 ---
 
+## Determine operations
+
+```{r}
+write_cibersort_decon_solidtumor <- FALSE
+```
+
 ## Load packages and targets
 
 ```{r}
 library(tidyverse)
 library(R.utils)
+
+#install.packages("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/immunedeconv-master/immunedeconv-master/", repos = NULL, type = "source")
+
+library(immunedeconv)
+library(tidyverse)
+library(biomaRt)
+library(knitr)
+library(patchwork)
+
+set_cibersort_binary("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT.R")
+set_cibersort_mat("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt")
 ```
 
 ```{r}
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
 
 ```
 
@@ -88,7 +106,7 @@ if (!(file.exists(paste(file_path, file_name_pheno2, ".tsv", sep = "")))){
 ```
 
 ```{r}
-df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+#df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
 
 df_st_pd <- read.csv(paste(file_path, file_name_pheno1, ".tsv", sep = ""),sep = "\t")
 df_clin_pd <- read.csv(paste(file_path, file_name_pheno2, ".tsv", sep = ""),sep = "\t")
@@ -100,119 +118,254 @@ df_pheno <- df_clin_pd %>%
 colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
 ```
 
-```{r}
-# List of patients with more than one sample. Options to compare gene expression in same individual but from different tissue (e.g. tumor vs normal tissue same patient)
-pat_morethan1sample <- df_pheno %>% 
-  group_by(X_PATIENT) %>% 
-  summarise(n=n()) %>%
-  filter(n>1 & n < 200) %>% 
-  dplyr::select(X_PATIENT) %>% 
-  unlist(use.names = F)
-
-#df_pheno %>% 
-#  filter(X_PATIENT %in% pat_morethan1sample)
-```
-
 ### Subset and wrangle data
 
 ```{r}
 geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
 geneName_ensg <- geneName_ensg %>% 
   rename(gene_ensg_shrt = converted_alias) %>% 
-  select(name, gene_ensg_shrt)
+  dplyr::select(name, gene_ensg_shrt)
 geneName_ensg
 ```
 
 ```{r}
+sample_id_solidtumor <- list()
+sample_id_laml_skcm <- list()
 
-cancer_types_list <- c("skin cutaneous melanoma",
-  "acute myeloid leukemia",
-  "cholangiocarcinoma",
-  "pancreatic adenocarcinoma",
-  "head & neck squamous cell carcinoma",
-  "breast invasive carcinoma",
-  "lung squamous cell carcinoma",
-  "diffuse large B-cell lymphoma",
-  "cervical & endocervical cancer")
-
-cancer_type <- "pancreatic adenocarcinoma"
-
-samples_ids_PAAD <- df_st_pd %>% 
-  filter(X_primary_disease %in% "pancreatic adenocarcinoma" &
-           sample %in% colnames(df_data)) %>% 
-  dplyr::select(sample) %>% 
-  unlist(use.names = FALSE)
-
-samples_ids_LAML <- df_st_pd %>% 
-  filter(X_primary_disease %in% "acute myeloid leukemia" &
-           sample %in% colnames(df_data)) %>% 
-  dplyr::select(sample) %>% 
-  unlist(use.names = FALSE)
-
-samples_ids_HNSC <- df_st_pd %>% 
-  filter(X_primary_disease %in% "head & neck squamous cell carcinoma" &
-           sample %in% colnames(df_data)) %>% 
-  dplyr::select(sample) %>% 
-  unlist(use.names = FALSE)
-
-samples_ids_SKCM <- df_st_pd %>% 
-  filter(X_primary_disease %in% "skin cutaneous melanoma" &
-           sample %in% colnames(df_data)) %>% 
-  dplyr::select(sample) %>% 
-  unlist(use.names = FALSE)
-
-df_PAAD <- df_data %>% 
-  dplyr::select(sample, all_of(samples_ids_PAAD)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
-
-df_LAML <- df_data %>% 
-  dplyr::select(sample, all_of(samples_ids_LAML)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
-
-df_HNSC <- df_data %>% 
-  dplyr::select(sample, all_of(samples_ids_HNSC)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
-
-df_SKCM <- df_data %>% 
-  dplyr::select(sample, all_of(samples_ids_SKCM)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
+for (c_type in cancer_abbr_list){
+   df_pheno_c_type <- df_pheno %>% 
+    filter(cancer.type.abbreviation == c_type)
+   
+   # Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
+   # For Melanoma, both metastatic and tumor. 
+   if (c_type == "LAML"){
+     sample_id_laml_skcm[[c_type]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
+       dplyr::select(sample)
+     
+   } else if(c_type == "SKCM"){
+     sample_id_laml_skcm[["SKCM_tumor"]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Tumor") %>%
+       dplyr::select(sample)
+     
+     sample_id_laml_skcm[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Metastatic") %>%
+       dplyr::select(sample)
+     
+   } else {
+     sample_id_solidtumor[[c_type]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Tumor") %>%
+       dplyr::select(sample) 
+   }
+}
 ```
 
 ```{r}
-df_PAAD_2 <- df_PAAD %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  full_join(geneName_ensg, by="gene_ensg_shrt") %>% 
-  relocate(sample, gene_ensg_shrt, name) %>% 
-  filter(!(is.na(name)))
+# Non log in positive numerical values is required to run in cibersort. 
 
-df_PAAD_2
+flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
+
+df_solidtumor <- df_data %>% 
+  dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+# Add gene name for target genes and remove the rest
+#df_solidtumor_2 <- df_solidtumor %>% 
+#  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+#  full_join(geneName_ensg, by="gene_ensg_shrt") %>% 
+#  relocate(sample, gene_ensg_shrt, name) %>% 
+#  filter(!(is.na(name)))
 ```
 
 ## Adjust for cell type
 
-```{r}
-#install.packages("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/immunedeconv-master/immunedeconv-master/", repos = NULL, type = "source")
+### Cibersort
 
-library(immunedeconv)
-library(tidyverse)
-library(biomaRt)
-library(knitr)
-library(patchwork)
+```{r}
+#dependencies
+library(e1071)
+library(parallel)
+library(preprocessCore)
+
+#Core algorithm
+CoreAlg <- function(X, y){
+    
+    #try different values of nu
+    svn_itor <- 3
+    
+    res <- function(i){
+        if(i==1){nus <- 0.25}
+        if(i==2){nus <- 0.5}
+        if(i==3){nus <- 0.75}
+        model<-svm(X,y,type="nu-regression",kernel="linear",nu=nus,scale=F)
+        model
+    }
+
+    if(Sys.info()['sysname'] == 'Windows') out <- mclapply(1:svn_itor, res, mc.cores=1) else
+    out <- mclapply(1:svn_itor, res, mc.cores=svn_itor)
+    
+    nusvm <- rep(0,svn_itor)
+    corrv <- rep(0,svn_itor)
+    
+    #do cibersort
+    t <- 1
+    while(t <= svn_itor) {
+        weights = t(out[[t]]$coefs) %*% out[[t]]$SV
+        weights[which(weights<0)]<-0
+        w<-weights/sum(weights)
+        u <- sweep(X,MARGIN=2,w,'*')
+        k <- apply(u, 1, sum)
+        nusvm[t] <- sqrt((mean((k - y)^2)))
+        corrv[t] <- cor(k, y)
+        t <- t + 1
+    }
+    
+    #pick best model
+    rmses <- nusvm
+    mn <- which.min(rmses)
+    model <- out[[mn]]
+    
+    #get and normalize coefficients
+    q <- t(model$coefs) %*% model$SV
+    q[which(q<0)]<-0
+    w <- (q/sum(q))
+    
+    mix_rmse <- rmses[mn]
+    mix_r <- corrv[mn]
+
+    newList <- list("w" = w, "mix_rmse" = mix_rmse, "mix_r" = mix_r)
+
+}
+
+#do permutations
+doPerm <- function(perm, X, Y){
+    itor <- 1
+    Ylist <- as.list(data.matrix(Y))
+    dist <- matrix()
+    
+    while(itor <= perm){
+        #print(itor)
+        
+        #random mixture
+        yr <- as.numeric(Ylist[sample(length(Ylist),dim(X)[1])])
+
+        #standardize mixture
+        yr <- (yr - mean(yr)) / sd(yr)
+
+        #run CIBERSORT core algorithm
+        result <- CoreAlg(X, yr)
+        
+        mix_r <- result$mix_r
+        
+        #store correlation
+        if(itor == 1) {dist <- mix_r}
+        else {dist <- rbind(dist, mix_r)}
+        
+        itor <- itor + 1
+    }
+    newList <- list("dist" = dist)
+}
+
+#main function
+CIBERSORT <- function(sig_matrix, mixture_matrix, perm=0, QN=TRUE, file_dest, in_c_type){
+    
+    #read in data
+    X <- read.table(sig_matrix,header=T,sep="\t",row.names=1,check.names=F)
+    #Y <- read.table(mixture_file, header=T, sep="\t", row.names=1,check.names=F)
+
+    X <- data.matrix(X)
+    Y <- mixture_matrix #data.matrix(Y)
+
+    P <- perm #number of permutations
+    
+    #anti-log if max < 50 in mixture file
+    if(max(Y) < 50) {Y <- 2^Y}
+    
+    #quantile normalization of mixture file
+    if(QN == TRUE){
+        tmpc <- colnames(Y)
+        tmpr <- rownames(Y)
+        Y <- normalize.quantiles(Y)
+        colnames(Y) <- tmpc
+        rownames(Y) <- tmpr
+    }
+
+    #intersect genes
+    Xgns <- row.names(X)
+    Ygns <- row.names(Y)
+    YintX <- Ygns %in% Xgns
+    Y <- Y[YintX,]
+    XintY <- Xgns %in% row.names(Y)
+    X <- X[XintY,]
+
+    #standardize sig matrix
+    X <- (X - mean(X)) / sd(as.vector(X))
+    
+    #empirical null distribution of correlation coefficients
+    if(P > 0) {nulldist <- sort(doPerm(P, X, Y)$dist)}
+    
+    #print(nulldist)
+
+    header <- c('Mixture',colnames(X),"P-value","Correlation","RMSE")
+    #print(header)
+
+    output <- matrix()
+    itor <- 1
+    mixtures <- dim(Y)[2]
+    pval <- 9999
+
+    #iterate through mixtures
+    while(itor <= mixtures){
+        
+        y <- Y[,itor]
+        
+        #standardize mixture
+        y <- (y - mean(y)) / sd(y)
+
+        #run SVR core algorithm
+        result <- CoreAlg(X, y)
+        
+        #get results
+        w <- result$w
+        mix_r <- result$mix_r
+        mix_rmse <- result$mix_rmse
+
+        #calculate p-value
+        if(P > 0) {pval <- 1 - (which.min(abs(nulldist - mix_r)) / length(nulldist))}
+
+        #print output
+        out <- c(colnames(Y)[itor],w,pval,mix_r,mix_rmse)
+        if(itor == 1) {output <- out}
+        else {output <- rbind(output, out)}
+        
+        itor <- itor + 1
+        
+    }
+    
+    #save results
+    write.table(rbind(header,output), file=paste0(file_dest, "/CIBERSORT-Results_", in_c_type, ".txt"), sep="\t", row.names=F, col.names=F, quote=F)
+    
+    #return matrix object containing all results
+    obj <- rbind(header,output)
+    obj <- obj[,-1]
+    obj <- obj[-1,]
+    obj <- matrix(as.numeric(unlist(obj)),nrow=nrow(obj))
+    rownames(obj) <- colnames(Y)
+    colnames(obj) <- c(colnames(X),"P-value","Correlation","RMSE")
+    obj
+}
 ```
 
 ```{r}
 # Change ENSG to gene names: 
 mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
-genes <- df_PAAD$gene_ensg_shrt
+genes <- df_solidtumor$gene_ensg_shrt
 
 G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
 
 # Add gene names and remove duplicates
-df_PAAD <- df_PAAD %>% 
+df_solidtumor <- df_solidtumor %>% 
   left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
   relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
   filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
@@ -224,21 +377,44 @@ Use ESTIMATE to compute a score for tumoral, immune and stromal components and t
 Use quantiseq to determine cell compostition for each sample.
 
 ```{r}
-gExp_mat_PAAD <- df_PAAD %>% 
+# Change from log to positive numeric values. Required to run cibersort:
+df_solidtumor <- df_solidtumor %>% 
+  mutate(across(-c(sample, gene_ensg_shrt, hgnc_symbol), function(x) 2^x))
+
+# Make gene expression matrix: 
+gExp_mat_solidtumor <- df_solidtumor %>% 
   dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
   column_to_rownames(var = "hgnc_symbol") %>% 
   as.matrix() 
-
-# Estimate purity of sample. How much is stromal, immune and tumor from sample. 
-estimate_PAAD <- deconvolute_estimate(gExp_mat_PAAD)
-
-# Determine cell composition in samples. Using quantiseq method. 
-quantiseq_PAAD <- immunedeconv::deconvolute(gExp_mat_PAAD, method = "quantiseq",
-                                            tumor=TRUE)
 ```
 
 ```{r}
-df_PAAD
+# Estimate purity of sample. How much is stromal, immune and tumor from sample. 
+estimate_solidtumor <- deconvolute_estimate(gExp_mat_solidtumor)
+```
+
+```{r}
+if (write_cibersort_decon_solidtumor) {
+  
+  lm_22_filepath <- 'C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt'
+
+  solidtumors <- cancer_abbr_list[!(cancer_abbr_list %in% c("LAML", "SKCM"))]
+  
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  decon_solidtumor_cibersort <- list()
+  
+  for (c_type in solidtumors){
+    print(c_type)
+    
+    sample_ids <- intersect(colnames(gExp_mat_solidtumor), unlist(sample_id_solidtumor[[c_type]], use.names = FALSE))
+    
+    gExp_ctype <- gExp_mat_solidtumor[,sample_ids]
+    
+    decon_solidtumor_cibersort[[c_type]] <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, c_type)
+
+  }
+}
 ```
 
 ### Adjust with linear regression
@@ -291,36 +467,58 @@ adjust_cell_type_lm <- function(gene_expr_df, deconvolution, targets) {
 ```
 
 ```{r}
+# Adjust gene expression using deconvolution from cibersort: 
+adjusted_geneExp_solidtumor_cibersort <- list()
 
-samples_of_int_tumor <- df_st_pd %>% 
-  filter(sample %in% samples_of_int, 
-         sample_type %in% "Primary Tumor") %>% 
-  dplyr:::select(sample) %>% 
-  unlist(use.names = FALSE)
+for (c_type in solidtumors){
+  
+  deconvolution_samples <- decon_solidtumor_cibersort[[c_type]]
+  
+  sample_ids <- intersect(colnames(gExp_mat_solidtumor), unlist(sample_id_solidtumor[[c_type]], use.names = FALSE))
+  gene_expr_df <- gExp_mat_solidtumor[,sample_ids]
+  
+  gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% target_list,]
+  
+  # Create an empty matrix to store predictions
+  predicted_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+  rownames(predicted_matrix) <- rownames(gene_expr_df)
+  colnames(predicted_matrix) <- colnames(gene_expr_df)
+  
+  
+  # Iterate over each gene
+  for (gene in rownames(gene_expr_df)) {
+    # Extract gene expression values for the gene of interest
+    gene_expression <- as.numeric(gene_expr_df[gene, ])
+    
+    # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+    if (length(gene_expression) == nrow(deconvolution_samples)) {
+      # Perform linear regression
+      model <- lm(gene_expression ~ deconvolution_samples)
+      
+      # Predict gene expression
+      predicted_expression <- predict(model, newdata = as.data.frame(deconvolution_samples))
+      
+      # Store predictions in the matrix
+      predicted_matrix[gene, ] <- predicted_expression
+      
+  
+        
+    } else {
+      warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+    }
+  }
+  
+  adjusted_geneExp_solidtumor_cibersort[[c_type]] <- predicted_matrix
+    
+  # Write file
+  as_tibble(predicted_matrix) %>% 
+    mutate(genes = rownames(predicted_matrix)) %>% 
+    relocate(genes) %>% 
+    write_tsv(file=paste0(file_dest, "/CIBERSORT-Adjusted_gene_expression_", c_type, ".tsv"))
+  
+}
 
-samples_of_int_normal <- df_st_pd %>% 
-  filter(sample %in% samples_of_int, 
-         sample_type %in% "Solid Tissue Normal") %>% 
-  dplyr:::select(sample) %>% 
-  unlist(use.names = FALSE)
 
-
-
-adj_PAAD_normal <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD[,samples_of_int_normal], 
-                     deconvolution = quantiseq_PAAD[, c("cell_type", samples_of_int_normal)], 
-                     targets = target_list)
-
-adj_PAAD_tumor <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD[,samples_of_int_tumor], 
-                     deconvolution = quantiseq_PAAD[, c("cell_type", samples_of_int_tumor)], 
-                     targets = target_list)
-
-adj_PAAD <- adjust_cell_type_lm( gene_expr_df = gExp_mat_PAAD,
-                     deconvolution = quantiseq_PAAD,
-                     targets = target_list)
-
-adj_PAAD
-
-adj_PAAD_tumor
 ```
 
 ### Plots and tables
