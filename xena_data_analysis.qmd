@@ -106,16 +106,12 @@ if (!(file.exists(paste(file_path, file_name_pheno2, ".tsv", sep = "")))){
 ```
 
 ```{r}
-#df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
-
 df_st_pd <- read.csv(paste(file_path, file_name_pheno1, ".tsv", sep = ""),sep = "\t")
 df_clin_pd <- read.csv(paste(file_path, file_name_pheno2, ".tsv", sep = ""),sep = "\t")
 
 df_pheno <- df_clin_pd %>% 
   full_join(df_st_pd, by = "sample")
 
-# Change format of colnames to have "-" instead of ".":
-colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
 ```
 
 ### Subset and wrangle data
@@ -161,7 +157,31 @@ for (c_type in cancer_abbr_list){
 ```
 
 ```{r}
-# Non log in positive numerical values is required to run in cibersort. 
+# Write new tsv to load as df_data:
+new_file_name <- paste0(file_path, "TCGA_PANCAN_gene_expression_RNAseq_tpm_subset_cancertypes.tsv")
+
+if (!(file.exists(new_file_name))){
+    
+  all_samples_of_interest <- intersect(
+    c(unlist(sample_id_solidtumor, use.names = FALSE),
+    unlist(sample_id_laml_skcm, use.names = FALSE)),
+    colnames(df_data))
+  
+  df_data %>% 
+    dplyr::select(sample, all_of(all_samples_of_interest)) %>% 
+    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+    write_tsv(new_file_name)
+}
+  
+# Load data: 
+if (!exists("df_data")){
+  df_data <- read.csv(new_file_name, sep = "\t")
+}
+```
+
+```{r}
+# Change format of colnames to have "-" instead of ".":
+colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
 
 flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
 
@@ -378,14 +398,19 @@ Use quantiseq to determine cell compostition for each sample.
 
 ```{r}
 # Change from log to positive numeric values. Required to run cibersort:
-df_solidtumor <- df_solidtumor %>% 
-  mutate(across(-c(sample, gene_ensg_shrt, hgnc_symbol), function(x) 2^x))
-
 # Make gene expression matrix: 
 gExp_mat_solidtumor <- df_solidtumor %>% 
+  mutate(across(-c(sample, gene_ensg_shrt, hgnc_symbol), function(x) 2^x)) %>% 
   dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
   column_to_rownames(var = "hgnc_symbol") %>% 
   as.matrix() 
+
+# Save matrix where I keep log values (standard from data): 
+gExp_mat_solidtumor_logval <- df_solidtumor %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  column_to_rownames(var = "hgnc_symbol") %>% 
+  as.matrix() 
+
 ```
 
 ```{r}
@@ -412,6 +437,24 @@ if (write_cibersort_decon_solidtumor) {
     gExp_ctype <- gExp_mat_solidtumor[,sample_ids]
     
     decon_solidtumor_cibersort[[c_type]] <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, c_type)
+
+  }
+}
+```
+
+```{r}
+# Read the cibersort results from files: 
+if (!exists("decon_solidtumor_cibersort")){
+  decon_solidtumor_cibersort <- list()
+  
+  solidtumors <- cancer_abbr_list[!(cancer_abbr_list %in% c("LAML", "SKCM"))]
+  
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  for (c_type in solidtumors){
+    print(c_type)
+    
+    decon_solidtumor_cibersort[[c_type]] <- read_tsv(paste0(file_dest, "/CIBERSORT-Results_", c_type, ".txt"), show_col_types = FALSE)
 
   }
 }
@@ -472,10 +515,14 @@ adjusted_geneExp_solidtumor_cibersort <- list()
 
 for (c_type in solidtumors){
   
-  deconvolution_samples <- decon_solidtumor_cibersort[[c_type]]
+  deconvolution_samples <- decon_solidtumor_cibersort[[c_type]] %>% 
+    dplyr::select(-Mixture) %>% 
+    data.matrix()
   
-  sample_ids <- intersect(colnames(gExp_mat_solidtumor), unlist(sample_id_solidtumor[[c_type]], use.names = FALSE))
-  gene_expr_df <- gExp_mat_solidtumor[,sample_ids]
+  sample_ids <- intersect(colnames(gExp_mat_solidtumor_logval), 
+                          unlist(sample_id_solidtumor[[c_type]], 
+                                 use.names = FALSE))
+  gene_expr_df <- gExp_mat_solidtumor_logval[,sample_ids]
   
   gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% target_list,]
   
@@ -514,10 +561,9 @@ for (c_type in solidtumors){
   as_tibble(predicted_matrix) %>% 
     mutate(genes = rownames(predicted_matrix)) %>% 
     relocate(genes) %>% 
-    write_tsv(file=paste0(file_dest, "/CIBERSORT-Adjusted_gene_expression_", c_type, ".tsv"))
+    write_tsv(file=paste0(file_dest, "/CIBERSORT-Adjusted_gene_expression_log2_", c_type, ".tsv"))
   
 }
-
 
 ```
 

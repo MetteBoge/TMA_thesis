@@ -198,13 +198,11 @@ for (c_type in cancer_abbr_list){
 transcript_data[["SKCM"]]
 ```
 
+## Adjust to gene exp data (adjusted)
+
 ## Plot
 
 ### Heatmap
-
-```{r}
-transcript_data[[c_type]] 
-```
 
 ```{r}
 c_type <- "SKCM"
@@ -234,14 +232,47 @@ transcript_data[[c_type]] %>%
 
 ```{r}
 
-df_transcripts <- tibble()
+transcript_info_filepath <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv"
 
-for (gene in target_list){
-  df_transcripts <- bind_rows(df_transcripts, read_csv(paste0("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_", gene, ".csv"), show_col_types = FALSE))  
+if (!(file.exists(transcript_info_filepath))){
+  df_transcripts <- tibble()
+  
+  for (gene in target_list){
+    df_transcripts <- bind_rows(df_transcripts, read_csv(paste0("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_", gene, ".csv"), show_col_types = FALSE))  
+  }
+
+  write_tsv(df_transcripts, transcript_info_filepath)
 }
 
 
-write_tsv(df_transcripts, "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv")
+# Remove version numbers from the transcript ID. 
+transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>% 
+  mutate(`Transcript ID` = gsub("\\..*", "", `Transcript ID`)) %>% 
+  rename(transcript_id = `Transcript ID`) %>% 
+  arrange(Name)
+
+transcript_info_protein <- transcript_info %>% 
+  dplyr::select(transcript_id, Protein)
+
+transcript_info_protein %>% View()
+```
+
+```{r}
+transcript_data_ctype <- transcript_data[[c_type]] %>% 
+  left_join(transcript_info_protein, by="transcript_id") %>% 
+  relocate(transcript_id, gene_id, gene_id_b, Protein)
+
+transcript_data_ctype %>% 
+  rename(transcript_name = gene_id) %>% 
+  dplyr::select(-c(transcript_id)) %>% 
+  pivot_longer(cols = -c(transcript_name, gene_id_b, Protein), 
+               values_to = "trans_exp",
+               names_to = "samples") %>% 
+  ggplot(aes(x = gene_id_b, y=trans_exp, fill=transcript_name)) +
+  geom_col()
+```
+
+```{r}
 
 ```
 
