@@ -8,6 +8,7 @@ editor: visual
 
 ```{r}
 write_cibersort_decon_solidtumor <- FALSE
+write_cibersort_decon_skcm <- FALSE
 ```
 
 ## Load packages and targets
@@ -189,6 +190,19 @@ df_solidtumor <- df_data %>%
   dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
   mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
   relocate(sample, gene_ensg_shrt)
+
+
+df_skcm <- list()
+
+for (skcm_type in names(sample_id_laml_skcm[-1])){
+  
+  flat_sample_id_skcm <- intersect(unlist(sample_id_laml_skcm[[skcm_type]], use.names = FALSE), colnames(df_data))
+  
+  df_skcm[[skcm_type]] <- df_data %>% 
+    dplyr::select(sample, all_of(flat_sample_id_skcm)) %>% 
+    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+    relocate(sample, gene_ensg_shrt)
+}
 
 # Add gene name for target genes and remove the rest
 #df_solidtumor_2 <- df_solidtumor %>% 
@@ -390,6 +404,51 @@ df_solidtumor <- df_solidtumor %>%
   relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
   filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
   distinct(hgnc_symbol, .keep_all = TRUE) # Keep only ONE of duplicated genes 
+
+
+# Empty list to save matrices: 
+gExp_mat_skcm <- list()
+gExp_mat_skcm_logval <- list()
+
+# Remove duplicates (median) for melanoma data: 
+for (skcm_type in names(df_skcm)){
+  duplicates <- df_skcm[[skcm_type]] %>% 
+    left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
+    filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
+    relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
+    group_by(hgnc_symbol) %>% 
+    filter(n()>1) %>% arrange(hgnc_symbol) %>% 
+    summarize(
+      # Taking the first entry of the useless_info columns (since they vary but are not aggregated)
+      sample = first(sample),
+      gene_ensg_shrt = first(gene_ensg_shrt),
+      # Calculating the median for all sample columns, assuming their names start with 'sample'
+      across(starts_with("TCGA"), median)
+    ) 
+  
+  not_duplicated <- df_skcm[[skcm_type]] %>% 
+    left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
+    filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
+    relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
+    group_by(hgnc_symbol) %>% 
+    filter(n()==1) %>% arrange(hgnc_symbol) 
+    
+    
+  df_skcm[[skcm_type]] <- bind_rows(duplicates, not_duplicated)
+  
+  gExp_mat_skcm[[skcm_type]] <- df_skcm[[skcm_type]] %>% 
+    mutate(across(-c(sample, gene_ensg_shrt, hgnc_symbol), function(x) 2^x)) %>% 
+    dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+    column_to_rownames(var = "hgnc_symbol") %>% 
+    as.matrix() 
+
+  gExp_mat_skcm_logval[[skcm_type]] <- df_skcm[[skcm_type]] %>% 
+    dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+    column_to_rownames(var = "hgnc_symbol") %>% 
+    as.matrix() 
+}
+
+
 ```
 
 Use ESTIMATE to compute a score for tumoral, immune and stromal components and the fraction of tumor purity.
@@ -410,6 +469,7 @@ gExp_mat_solidtumor_logval <- df_solidtumor %>%
   dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
   column_to_rownames(var = "hgnc_symbol") %>% 
   as.matrix() 
+
 
 ```
 
@@ -440,6 +500,29 @@ if (write_cibersort_decon_solidtumor) {
 
   }
 }
+
+
+# For melanoma
+if (write_cibersort_decon_skcm) {
+  
+  lm_22_filepath <- 'C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt'
+
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  decon_skcm_cibersort <- list()
+  
+  for (skcm_type in names(gExp_mat_skcm)){
+    print(skcm_type)
+    
+    decon_skcm_cibersort <- list()
+    
+    gExp_ctype <- gExp_mat_skcm[[skcm_type]]
+    
+    decon_skcm_cibersort[[skcm_type]] <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, skcm_type)
+
+  }
+}
+
 ```
 
 ```{r}
@@ -455,6 +538,21 @@ if (!exists("decon_solidtumor_cibersort")){
     print(c_type)
     
     decon_solidtumor_cibersort[[c_type]] <- read_tsv(paste0(file_dest, "/CIBERSORT-Results_", c_type, ".txt"), show_col_types = FALSE)
+
+  }
+}
+
+
+# Read the cibersort results from files: 
+if (!exists("decon_skcm_cibersort")){
+  decon_skcm_cibersort <- list()
+  
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  for (skcm_type in names(gExp_mat_skcm)){
+    print(skcm_type)
+    
+    decon_skcm_cibersort[[skcm_type]] <- read_tsv(paste0(file_dest, "/CIBERSORT-Results_", skcm_type, ".txt"), show_col_types = FALSE)
 
   }
 }
@@ -565,6 +663,80 @@ for (c_type in solidtumors){
   
 }
 
+
+
+
+# Adjust gene expression using deconvolution from cibersort: 
+adjusted_geneExp_skcm_cibersort <- list()
+
+for (skcm_type in names(gExp_mat_skcm_logval)){
+  
+  deconvolution_samples <- decon_skcm_cibersort[[skcm_type]] %>% 
+    dplyr::select(-Mixture) %>% 
+    data.matrix()
+  
+  gene_expr_df <- gExp_mat_skcm_logval[[skcm_type]]
+  
+  gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% target_list,]
+  
+  # Create an empty matrix to store predictions
+  predicted_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+  rownames(predicted_matrix) <- rownames(gene_expr_df)
+  colnames(predicted_matrix) <- colnames(gene_expr_df)
+  
+  
+  # Iterate over each gene
+  for (gene in rownames(gene_expr_df)) {
+    # Extract gene expression values for the gene of interest
+    gene_expression <- as.numeric(gene_expr_df[gene, ])
+    
+    # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+    if (length(gene_expression) == nrow(deconvolution_samples)) {
+      # Perform linear regression
+      model <- lm(gene_expression ~ deconvolution_samples)
+      
+      # Predict gene expression
+      predicted_expression <- predict(model, newdata = as.data.frame(deconvolution_samples))
+      
+      # Store predictions in the matrix
+      predicted_matrix[gene, ] <- predicted_expression
+        
+    } else {
+      warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+    }
+  }
+  
+  adjusted_geneExp_skcm_cibersort[[skcm_type]] <- predicted_matrix
+    
+  # Write file
+  as_tibble(predicted_matrix) %>% 
+    mutate(genes = rownames(predicted_matrix)) %>% 
+    relocate(genes) %>% 
+    write_tsv(file=paste0(file_dest, "/CIBERSORT-Adjusted_gene_expression_log2_", skcm_type, ".tsv"))
+  
+}
+
+```
+
+```{r}
+as.data.frame(adjusted_geneExp_solidtumor_cibersort[["PAAD"]]) %>% 
+  rownames_to_column("genes") %>% 
+  pivot_longer(cols = -c(genes),
+               values_to = "gene_exp",
+               names_to = "samples") %>% 
+  ggplot(aes(x=gene_exp, y=genes)) +
+  geom_boxplot(fill = "lightsteelblue4", alpha = 0.5) +
+  labs(title = "Original gene expression",
+       x = "log2(tpm+0.001)",
+       y = "") + 
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16))
 ```
 
 ### Plots and tables
