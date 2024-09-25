@@ -402,8 +402,24 @@ G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgn
 df_solidtumor <- df_solidtumor %>% 
   left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
   relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
-  filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) %>% 
-  distinct(hgnc_symbol, .keep_all = TRUE) # Keep only ONE of duplicated genes 
+  filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) 
+
+duplicates <- df_solidtumor %>% 
+  group_by(hgnc_symbol) %>% 
+  filter(n()>1) %>% arrange(hgnc_symbol) %>% 
+  summarize(
+    # Taking the first entry of the useless_info columns (since they vary but are not aggregated)
+    sample = first(sample),
+    gene_ensg_shrt = first(gene_ensg_shrt),
+    # Calculating the median for all sample columns, assuming their names start with 'sample'
+    across(starts_with("TCGA"), median)
+  ) 
+
+not_duplicated <- df_solidtumor %>% 
+  group_by(hgnc_symbol) %>% 
+  filter(n()==1) %>% arrange(hgnc_symbol) 
+
+df_solidtumor <- bind_rows(duplicates, not_duplicated)
 
 
 # Empty list to save matrices: 

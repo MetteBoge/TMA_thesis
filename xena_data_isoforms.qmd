@@ -11,6 +11,9 @@ library(tidyverse)
 library(R.utils)
 library(arrow)
 library(biomaRt)
+library(seqinr)
+library(RColorBrewer)
+library(viridis)
 ```
 
 ```{r}
@@ -205,7 +208,7 @@ transcript_data[["SKCM"]]
 ### Heatmap
 
 ```{r}
-c_type <- "SKCM"
+c_type <- "PAAD"
 gene_of_interest <- "ARG1"
 
 transcript_data[[c_type]] %>% 
@@ -231,6 +234,7 @@ transcript_data[[c_type]] %>%
 ## Investigate the transcripts
 
 ```{r}
+# Download the AA sequences of the coding transcripts: 
 
 transcript_info_filepath <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv"
 
@@ -251,101 +255,301 @@ transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>
   rename(transcript_id = `Transcript ID`) %>% 
   arrange(Name)
 
-transcript_info_protein <- transcript_info %>% 
-  dplyr::select(transcript_id, Protein)
+#transcript_info_protein <- transcript_info %>% 
+#  dplyr::select(transcript_id, Protein)
 
-transcript_info_protein %>% View()
+transcript_info_wSeq <- transcript_info %>% 
+  mutate(uniprot_seq = map(`UniProt Match`, function(uni_id) {
+    if (nchar(uni_id)>1){
+      print(uni_id)
+      # If contains a space, it might have two ids: Split
+      if (grepl(" ", uni_id)){
+        
+        seq_list <- list()
+        for (sub_id in unlist(strsplit(uni_id, " "))){
+          seq_list[[sub_id]] <- tryCatch({
+            read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", sub_id, ".fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]}, 
+            error = function(cond){
+              message(paste("Error ocurred when downloading:", sub_id))
+              message(conditionMessage(cond))
+              message("Trying to download from different link.")
+              read.fasta(url(paste0("https://rest.uniprot.org/unisave/", sub_id, "?format=fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]
+            })
+        }
+        return(seq_list)
+      } else {
+        read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", 
+                             uni_id, ".fasta")), 
+                  as.string = T, 
+                  seqtype = "AA", 
+                  set.attributes = F)[[1]]
+      }
+    } else 
+      NaN
+    }))
+
+# Check the nchar in the seq: (lengths)
+#transcript_info_wSeq %>% 
+#  mutate(seq_length = map(uniprot_seq, nchar)) %>% 
+#  View()
+
+# Unnest if more than one sequence:
+transcript_info_wSeq <- transcript_info_wSeq %>% 
+  mutate(uniprot_seq = map(uniprot_seq, ~ if (!is.list(.x)) list(.x) else .x)) %>%  # Convert characters to lists 
+  unnest(uniprot_seq)
+
+
+transcript_info_protein <- transcript_info_wSeq %>% 
+  dplyr::select(transcript_id, Protein, Biotype)
+
+target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
 ```
 
-```{r}
-transcript_data_ctype <- transcript_data[[c_type]] %>% 
-  left_join(transcript_info_protein, by="transcript_id") %>% 
-  relocate(transcript_id, gene_id, gene_id_b, Protein)
-
-transcript_data_ctype %>% 
-  rename(transcript_name = gene_id) %>% 
-  dplyr::select(-c(transcript_id)) %>% 
-  pivot_longer(cols = -c(transcript_name, gene_id_b, Protein), 
-               values_to = "trans_exp",
-               names_to = "samples") %>% 
-  ggplot(aes(x = gene_id_b, y=trans_exp, fill=transcript_name)) +
-  geom_col()
-```
+### Target sequences
 
 ```{r}
+# Construct data frame of the target sequences recieved on email from Morten Holmstrom. 
 
-```
+# Protein, name of epitope, epitope: 
+target_seq <- rbind(c("CD274", "IO103", "FMTYWHLLNAFTVTVPKDL"),
+      c("IDO1", "IO102", "DTLLKALLEIASCLEKALQVF"),
+      c("ARG1", "ARGLong2", "ISAKDIVYIGLRDVDPGEHYILKTLGIKYFSMTEVDRL"),
+      c("PDCD1LG2", "PD-L2Long1", "SLELQLHQIAALFTVTVPKEL"),
+      c("CCL22", "CCL22Long1", "MDRLQTALLVVLVLLAVALQAT"),
+      c("ARG2", "ARG2Long", "LQTRVHSILKKSVHSVAVIG"),
+      c("TGFb1", "TGFb_02", "LLLPLLWLLVLTPGRPAAGL"),
+      c("TGFb1", "TGFb_15", "REAVPEPVLLSRAELRLLRL"),
+      c("TGFb1", "TGFb_33", "FCLGPCPYIWSLDTQYSKVL"),
+      c("TGFb1", "TGFb_38", "GRKPKVEQLSNMIVRSCKCS"),
+      c("IL10", "IL10_L17", "FDIFINYIEAYMTMKIRN")) %>% 
+  as_tibble()
 
-```{r}
-transcript_id_list <- transcript_data[[c_type]] %>% 
-  dplyr::select(gene_id) %>% 
+colnames(target_seq) <- c("protein", "epitope_name", "epitope_seq")
+
+# Align to protein sequences of coding transcripts: 
+target_seq <- target_seq %>%
+  rowwise() %>%
+  mutate(matching_proteins = list(transcript_info_wSeq %>%
+                                    filter(str_detect(uniprot_seq, epitope_seq)) %>%
+                                    pull(Name))) %>%
+  ungroup() %>% 
+  unnest(matching_proteins) %>% 
+  distinct() # Remove duplicated rows. 
+
+prot_w_target_seq <- target_seq %>% 
+  dplyr::select(protein) %>% 
   unique() %>% 
-  unlist(use.names = FALSE)
+  unlist(use.names = F) %>% 
+  toupper()
+```
 
-df_transcripts <- tibble()
+### Percentage of expression
+
+```{r}
+c_type = cancer_abbr_list[1] # "PAAD"
+
+p_transcript_composition_w_epitope <- list()
+p_transcript_composition_wo_epitope <- list()
+
+for (c_type in cancer_abbr_list){
+    
+  transcript_data_ctype <- transcript_data[[c_type]] %>% 
+    left_join(transcript_info_protein, by="transcript_id") %>% 
+    mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+    dplyr::select(-c(Protein, target_seq_incl))
+  
+  
+  transcript_data_ctype_long <- transcript_data_ctype %>% 
+    pivot_longer(cols = -c(transcript_id, gene_id, gene_id_b, Biotype),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    group_by(gene_id_b, samples) %>% 
+    mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+    ungroup() 
+  
+  p_transcript_composition_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% prot_w_target_seq) %>% 
+    ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+    geom_bar(stat = "identity") +
+    facet_wrap(~gene_id_b) +
+    labs(#title = "Composition of expressed transcripts for \n8 genes with target epitopes",
+      subtitle = c_type,
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Samples",
+      y = "Fraction"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title = element_text(size = 13),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+    
+  p_transcript_composition_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(!gene_id_b %in% prot_w_target_seq) %>% 
+    ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+    geom_bar(stat = "identity") +
+    facet_wrap(~gene_id_b) + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = c_type,
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Samples",
+      y = "Fraction"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title = element_text(size = 13),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+    
+}
+
+p_transcript_composition_wo_epitope
 ```
 
 ```{r}
-tmp <- transcript_data[[c_type]] %>% 
-  dplyr::select(transcript_id) %>% 
-  unique() %>% unlist(use.names = FALSE)
+# Violin plots of original expression values 
+
+gene_w_single_transcript <- transcript_data_ctype_long %>% 
+  filter(samples == "TCGA-56-A5DR-01") %>% 
+  group_by(gene_id_b) %>% 
+  summarise(n=n()) %>% 
+  filter(n<2) %>% 
+  dplyr::select(gene_id_b) %>% 
+  unlist()
+
+
+p_transcript_exp_w_epitope <- list()
+p_transcript_exp_wo_epitope <- list()
+p_transcript_exp_single_trans <- list()
+
+for (c_type in cancer_abbr_list){
+    
+  transcript_data_ctype <- transcript_data[[c_type]] %>% 
+    left_join(transcript_info_protein, by="transcript_id") %>% 
+    mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+    dplyr::select(-c(Protein, target_seq_incl))
+  
+  
+  transcript_data_ctype_long <- transcript_data_ctype %>% 
+    pivot_longer(cols = -c(transcript_id, gene_id, gene_id_b, Biotype),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    group_by(gene_id_b, samples) %>% 
+    mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+    ungroup() 
+  
+  n_samples = transcript_data_ctype_long %>% 
+    dplyr::select(samples) %>% 
+    unique() %>% 
+    nrow()
+  
+  p_transcript_exp_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.title.x = element_text(vjust = 0),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  
+  p_transcript_exp_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(!gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      axis.title.x = element_text(vjust = 0),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  p_transcript_exp_single_trans[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+#      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+}
+
+
+p_transcript_exp_single_trans
 ```
-
-```{r}
-trans_tmp <- c('ENST00000512584.5',
- 'ENST00000553493.5',
- 'ENST00000381573.8',
- 'ENST00000407242.6',
- 'ENST00000469293.1',
- 'ENST00000404995.5',
- 'ENST00000553755.5',
- 'ENST00000556322.1',
- 'ENST00000521480.1',
- 'ENST00000498260.1',
- 'ENST00000522495.5',
- 'ENST00000275196.5',
- 'ENST00000356962.2',
- 'ENST00000518804.5',
- 'ENST00000342412.10',
- 'ENST00000522840.1',
- 'ENST00000557319.1',
- 'ENST00000503634.5',
- 'ENST00000556491.1',
- 'ENST00000421973.1',
- 'ENST00000556438.6',
- 'ENST00000546268.5',
- 'ENST00000484820.1',
- 'ENST00000498261.1',
- 'ENST00000556263.1',
- 'ENST00000225831.4',
- 'ENST00000523779.1',
- 'ENST00000507590.5',
- 'ENST00000260061.9',
- 'ENST00000506181.5',
- 'ENST00000597453.1',
- 'ENST00000602118.6',
- 'ENST00000506072.5',
- 'ENST00000519154.5',
- 'ENST00000474218.1',
- 'ENST00000587418.2',
- 'ENST00000598758.5',
- 'ENST00000423557.1',
- 'ENST00000557120.5',
- 'ENST00000554715.1',
- 'ENST00000492923.1',
- 'ENST00000510293.1',
- 'ENST00000464145.1',
- 'ENST00000253513.11',
- 'ENST00000521636.1',
- 'ENST00000593178.2',
- 'ENST00000395306.1',
- 'ENST00000509738.1')
-```
-
-```{r}
-setdiff(gsub("\\..*","",trans_tmp), tmp)
-setdiff(tmp,gsub("\\..*","",trans_tmp))
-
-```
-
-Figure out how naming convention is with transcripts. Is there another place where I can find the rest of the transcripts (I find only 48 if I keep .X extension).
