@@ -598,7 +598,14 @@ if (write_cibersort_decon_laml) {
   
   gExp_ctype <- gExp_mat_laml[,sample_ids]
   
-  decon_laml_cibersort <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, c_type)
+  decon_laml_cibersort <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, c_type) 
+  
+  decon_laml_cibersort <- decon_laml_cibersort %>% 
+    data.frame() %>% 
+    rownames_to_column("Mixture")
+  
+  # Change format of colnames to have "-" instead of ".":
+  colnames(decon_laml_cibersort) <- gsub("\\.", " ", colnames(decon_laml_cibersort))
  
 }
 
@@ -635,6 +642,18 @@ if (!exists("decon_skcm_cibersort")){
 
   }
 }
+
+
+# Read the cibersort results from files: 
+if (!exists("decon_laml_cibersort")){
+  
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  decon_laml_cibersort <- read_tsv(paste0(file_dest, "/CIBERSORT-Results_LAML.txt"), show_col_types = FALSE)
+
+}
+
+View(decon_laml_cibersort)
 ```
 
 ### Adjust with linear regression
@@ -795,6 +814,57 @@ for (skcm_type in names(gExp_mat_skcm_logval)){
   
 }
 
+
+# Adjust gene expression using deconvolution from cibersort: 
+c_type = "LAML"
+
+deconvolution_samples <- decon_laml_cibersort %>% 
+  dplyr::select(-Mixture) %>% 
+  data.matrix()
+
+sample_ids <- intersect(colnames(gExp_mat_laml_logval), 
+                        unlist(sample_id_laml_skcm[[c_type]], 
+                               use.names = FALSE))
+gene_expr_df <- gExp_mat_laml_logval[,sample_ids]
+
+gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% target_list,]
+
+# Create an empty matrix to store predictions
+predicted_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+rownames(predicted_matrix) <- rownames(gene_expr_df)
+colnames(predicted_matrix) <- colnames(gene_expr_df)
+
+
+# Iterate over each gene
+for (gene in rownames(gene_expr_df)) {
+  # Extract gene expression values for the gene of interest
+  gene_expression <- as.numeric(gene_expr_df[gene, ])
+  
+  # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+  if (length(gene_expression) == nrow(deconvolution_samples)) {
+    # Perform linear regression
+    model <- lm(gene_expression ~ deconvolution_samples)
+    
+    # Predict gene expression
+    predicted_expression <- predict(model, newdata = as.data.frame(deconvolution_samples))
+    
+    # Store predictions in the matrix
+    predicted_matrix[gene, ] <- predicted_expression
+    
+
+      
+  } else {
+    warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+  }
+}
+
+adjusted_geneExp_laml_cibersort <- predicted_matrix
+  
+# Write file
+as_tibble(adjusted_geneExp_laml_cibersort) %>% 
+  mutate(genes = rownames(adjusted_geneExp_laml_cibersort)) %>% 
+  relocate(genes) %>% 
+  write_tsv(file=paste0(file_dest, "/CIBERSORT-Adjusted_gene_expression_log2_", c_type, ".tsv"))
 ```
 
 ```{r}
