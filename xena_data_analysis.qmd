@@ -9,6 +9,7 @@ editor: visual
 ```{r}
 write_cibersort_decon_solidtumor <- FALSE
 write_cibersort_decon_skcm <- FALSE
+write_cibersort_decon_laml <- FALSE
 ```
 
 ## Load packages and targets
@@ -185,9 +186,15 @@ if (!exists("df_data")){
 colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
 
 flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
+flat_sample_id_laml <- intersect(list(unlist(sample_id_laml_skcm[["LAML"]], use.names = FALSE))[[1]], colnames(df_data))
 
 df_solidtumor <- df_data %>% 
   dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+df_laml <- df_data %>% 
+  dplyr::select(sample, all_of(flat_sample_id_laml)) %>% 
   mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
   relocate(sample, gene_ensg_shrt)
 
@@ -404,6 +411,12 @@ df_solidtumor <- df_solidtumor %>%
   relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
   filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) 
 
+# Add gene names and remove duplicates
+df_laml <- df_laml %>% 
+  left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
+  relocate(sample, gene_ensg_shrt, hgnc_symbol) %>% 
+  filter(!(is.na(hgnc_symbol)) & nchar(hgnc_symbol) > 0) 
+
 duplicates <- df_solidtumor %>% 
   group_by(hgnc_symbol) %>% 
   filter(n()>1) %>% arrange(hgnc_symbol) %>% 
@@ -420,6 +433,25 @@ not_duplicated <- df_solidtumor %>%
   filter(n()==1) %>% arrange(hgnc_symbol) 
 
 df_solidtumor <- bind_rows(duplicates, not_duplicated)
+
+
+duplicates <- df_laml %>% 
+  group_by(hgnc_symbol) %>% 
+  filter(n()>1) %>% arrange(hgnc_symbol) %>% 
+  summarize(
+    # Taking the first entry of the useless_info columns (since they vary but are not aggregated)
+    sample = first(sample),
+    gene_ensg_shrt = first(gene_ensg_shrt),
+    # Calculating the median for all sample columns, assuming their names start with 'sample'
+    across(starts_with("TCGA"), median)
+  ) 
+
+not_duplicated <- df_laml %>% 
+  group_by(hgnc_symbol) %>% 
+  filter(n()==1) %>% arrange(hgnc_symbol) 
+
+df_laml <- bind_rows(duplicates, not_duplicated)
+
 
 
 # Empty list to save matrices: 
@@ -487,11 +519,22 @@ gExp_mat_solidtumor_logval <- df_solidtumor %>%
   as.matrix() 
 
 
+gExp_mat_laml <- df_laml %>% 
+  mutate(across(-c(sample, gene_ensg_shrt, hgnc_symbol), function(x) 2^x)) %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  column_to_rownames(var = "hgnc_symbol") %>% 
+  as.matrix() 
+
+# Save matrix where I keep log values (standard from data): 
+gExp_mat_laml_logval <- df_laml %>% 
+  dplyr::select(-c("sample", "gene_ensg_shrt")) %>% 
+  column_to_rownames(var = "hgnc_symbol") %>% 
+  as.matrix() 
 ```
 
 ```{r}
 # Estimate purity of sample. How much is stromal, immune and tumor from sample. 
-estimate_solidtumor <- deconvolute_estimate(gExp_mat_solidtumor)
+#estimate_solidtumor <- deconvolute_estimate(gExp_mat_solidtumor)
 ```
 
 ```{r}
@@ -537,6 +580,26 @@ if (write_cibersort_decon_skcm) {
     decon_skcm_cibersort[[skcm_type]] <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, skcm_type)
 
   }
+}
+
+
+# For LAML
+if (write_cibersort_decon_laml) {
+  
+  lm_22_filepath <- 'C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt'
+  
+  file_dest <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/cibersort_decon"
+  
+  c_type <- "LAML"
+    
+  sample_ids <- intersect(colnames(gExp_mat_laml), 
+                          unlist(sample_id_laml_skcm[["LAML"]], 
+                                 use.names = FALSE))
+  
+  gExp_ctype <- gExp_mat_laml[,sample_ids]
+  
+  decon_laml_cibersort <- CIBERSORT(lm_22_filepath, gExp_ctype, 0, TRUE, file_dest, c_type)
+ 
 }
 
 ```
@@ -1194,4 +1257,10 @@ df_data_pheno_PAAD_geneSepc <- df_data_pheno_PAAD %>%
 cor.test(df_data_pheno_PAAD_geneSepc$exp,
          df_data_pheno_PAAD_geneSepc$PFI.time, 
          method="pearson")
+```
+
+```{r}
+df_pheno %>% 
+  filter(cancer.type.abbreviation == "DLBC") %>% 
+  dplyr::select(sample_type)
 ```

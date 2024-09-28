@@ -20,6 +20,7 @@ library(viridis)
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 
 cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
+cancer_abbr_list_skcm <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM_tumor", "SKCM_metastatic", "LUAD", "LUSC")
 
 ```
 
@@ -179,26 +180,36 @@ for (c_type in cancer_abbr_list){
 transcript_data <- list()
 
 for (c_type in cancer_abbr_list){
-  df_tmp <- read.csv(paste0(file_path, "TCGA_PANCAN_transcript_expression_RNAseq_RSEM_tpm_", c_type, ".tsv"), sep="\t") 
+  df_tmp <- read.csv(paste0(file_path, "TCGA_PANCAN_transcript_expression_RNAseq_RSEM_tpm_", c_type, ".tsv"), sep="\t") %>% 
+    mutate(gene_id_b = gsub("\\-.*", "", gene_id)) 
 
   colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
 
   if (c_type == "SKCM"){
-    sample_ids_tmp <- intersect(colnames(df_tmp), unlist(rbind(sample_id_df[["SKCM_metastatic"]], sample_id_df[["SKCM_tumor"]])))
+    sample_ids_tmp_skcm_meta <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
+    sample_ids_tmp_skcm_tumor <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
+    
+    transcript_data[["SKCM_metastatic"]] <- df_tmp %>% 
+      dplyr::select(transcript_id, gene_id, gene_id_b, sample_ids_tmp_skcm_meta)
+    
+    transcript_data[["SKCM_tumor"]] <- df_tmp %>% 
+      dplyr::select(transcript_id, gene_id, gene_id_b, sample_ids_tmp_skcm_tumor)
+    
   } else {
     sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
+    
+    transcript_data[[c_type]] <- df_tmp %>% 
+      dplyr::select(transcript_id, gene_id, gene_id_b, sample_ids_tmp)
   }
   
-  transcript_data[[c_type]] <- df_tmp %>% 
-    mutate(gene_id_b = gsub("\\-.*", "", gene_id)) %>% 
-    dplyr::select(transcript_id, gene_id, gene_id_b, sample_ids_tmp)
+
 
 }
 
 ```
 
 ```{r}
-transcript_data[["SKCM"]]
+transcript_data[["LAML"]]
 ```
 
 ## Adjust to gene exp data (adjusted)
@@ -255,8 +266,6 @@ transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>
   rename(transcript_id = `Transcript ID`) %>% 
   arrange(Name)
 
-#transcript_info_protein <- transcript_info %>% 
-#  dplyr::select(transcript_id, Protein)
 
 transcript_info_wSeq <- transcript_info %>% 
   mutate(uniprot_seq = map(`UniProt Match`, function(uni_id) {
@@ -357,13 +366,15 @@ c_type = cancer_abbr_list[1] # "PAAD"
 p_transcript_composition_w_epitope <- list()
 p_transcript_composition_wo_epitope <- list()
 
-for (c_type in cancer_abbr_list){
+for (c_type in cancer_abbr_list_skcm){
     
   transcript_data_ctype <- transcript_data[[c_type]] %>% 
     left_join(transcript_info_protein, by="transcript_id") %>% 
     mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
-    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
     relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                           ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
     dplyr::select(-c(Protein, target_seq_incl))
   
   
@@ -377,18 +388,25 @@ for (c_type in cancer_abbr_list){
     mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
     ungroup() 
   
+    
+  n_samples = transcript_data_ctype_long %>% 
+    dplyr::select(samples) %>% 
+    unique() %>% 
+    nrow()
+  
   p_transcript_composition_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
     filter(gene_id_b %in% prot_w_target_seq) %>% 
     ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
-    geom_bar(stat = "identity") +
+    geom_bar(stat = "identity", width = 1) +
     facet_wrap(~gene_id_b) +
     labs(#title = "Composition of expressed transcripts for \n8 genes with target epitopes",
-      subtitle = c_type,
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
       caption = "Source: Xena Browser, TCGA PANCAN",
       x = "Samples",
       y = "Fraction"
     ) +
-    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_brewer(palette = "Dark2") + 
+    scale_fill_manual(values = c("#1fd082ff", "#fc7634ff", "#79238eff", "#f6d04dff")) +
     theme(
       text=element_text(family="serif"),
       plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
@@ -404,16 +422,17 @@ for (c_type in cancer_abbr_list){
   p_transcript_composition_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
     filter(!gene_id_b %in% prot_w_target_seq) %>% 
     ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
-    geom_bar(stat = "identity") +
+    geom_bar(stat = "identity", width = 1) +
     facet_wrap(~gene_id_b) + 
     labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
-      subtitle = c_type,
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
       caption = "Source: Xena Browser, TCGA PANCAN",
       x = "Samples",
       y = "Fraction"
     ) +
-    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_brewer(palette = "Dark2") + 
     #scale_fill_viridis(option = "D", discrete = T) + 
+    scale_fill_manual(values = c("#1fd082ff", "#fc7634ff","#79238eff", "#f6d04dff")) +
     theme(
       text=element_text(family="serif"),
       plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
@@ -428,7 +447,65 @@ for (c_type in cancer_abbr_list){
     
 }
 
-p_transcript_composition_wo_epitope
+p_transcript_composition_w_epitope
+
+
+
+# Make a list of the pivot longer data frames: 
+transcript_data_long <- list()
+for (c_type in cancer_abbr_list_skcm){
+  transcript_data_long[[c_type]] <- transcript_data[[c_type]] %>% 
+    pivot_longer(cols = starts_with("TCGA"),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    mutate(cancer_type = c_type)
+}
+
+transcript_data_long_all <- bind_rows(transcript_data_long) %>% 
+  left_join(transcript_info_protein, by="transcript_id") %>% 
+  mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
+  relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+  mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+  mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                         ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+  group_by(cancer_type) %>% 
+  mutate(n=n_distinct(samples)) %>% 
+  ungroup() %>% 
+  mutate(cancer_name_n = paste0(cancer_type, "\n(n=", n, ")")) %>% 
+  dplyr::select(-c(Protein, target_seq_incl, n))
+
+# Make facet wrap of siglec in all cancer types. 
+transcript_data_long_all %>% 
+  group_by(gene_id_b, samples) %>% 
+  mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+  mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+  mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+  ungroup() %>% 
+  filter(gene_id_b == "SIGLEC15") %>% 
+  ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+  geom_bar(stat = "identity", width = 1) +
+  facet_wrap(~cancer_name_n, scales = "free") + 
+  labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+    subtitle = "SIGLEC15 isoform expression",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Samples",
+    y = "Fraction"
+  ) +
+  #scale_fill_brewer(palette = "Dark2") + 
+  #scale_fill_viridis(option = "D", discrete = T) + 
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff", "#f6d04dff")) +
+  theme(
+    text=element_text(family="serif", size = 20),
+    plot.title = element_text(color = "#0099f8", size = 30, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+#    axis.title = element_text(size = 13),
+    strip.background.x = element_blank()
+    )
+
+
 ```
 
 ```{r}
