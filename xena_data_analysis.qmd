@@ -25,6 +25,8 @@ library(tidyverse)
 library(biomaRt)
 library(knitr)
 library(patchwork)
+library(ggdendro)
+library(reshape2)
 
 set_cibersort_binary("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT.R")
 set_cibersort_mat("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt")
@@ -399,12 +401,34 @@ CIBERSORT <- function(sig_matrix, mixture_matrix, perm=0, QN=TRUE, file_dest, in
 ```
 
 ```{r}
-# Change ENSG to gene names: 
-mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
-genes <- df_solidtumor$gene_ensg_shrt
+# Make or load list of gene names (ENSG to gene names...)
 
-G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
+# Write new tsv to load as df_data:
+glist_file_name <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/G_list.tsv"
 
+if (!(file.exists(glist_file_name))){
+  # Change ENSG to gene names: 
+  mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+  genes <- c(df_solidtumor$gene_ensg_shrt, 
+             df_laml$gene_ensg_shrt,
+             df_skcm[["SKCM_tumor"]]$gene_ensg_shrt,
+             df_skcm[["SKCM_metastatic"]]$gene_ensg_shrt) %>% 
+    unique()
+  
+  G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
+  
+  G_list %>% 
+    write_tsv(glist_file_name)
+}
+  
+# Load data: 
+if (!exists("G_list")){
+  G_list <- read.csv(glist_file_name, sep = "\t")
+}
+
+```
+
+```{r}
 # Add gene names and remove duplicates
 df_solidtumor <- df_solidtumor %>% 
   left_join(G_list, by = c("gene_ensg_shrt"="ensembl_gene_id")) %>% 
@@ -653,7 +677,7 @@ if (!exists("decon_laml_cibersort")){
 
 }
 
-View(decon_laml_cibersort)
+#View(decon_laml_cibersort)
 ```
 
 ### Adjust with linear regression
@@ -868,7 +892,7 @@ as_tibble(adjusted_geneExp_laml_cibersort) %>%
 ```
 
 ```{r}
-as.data.frame(adjusted_geneExp_solidtumor_cibersort[["PAAD"]]) %>% 
+as.data.frame(adjusted_geneExp_solidtumor_cibersort[["CESC"]]) %>% 
   rownames_to_column("genes") %>% 
   pivot_longer(cols = -c(genes),
                values_to = "gene_exp",
@@ -887,6 +911,310 @@ as.data.frame(adjusted_geneExp_solidtumor_cibersort[["PAAD"]]) %>%
     axis.text.x = element_text(size = 16),
     axis.text.y = element_text(size = 16))
 ```
+
+#### Linear regression adjustment using residuals
+
+```{r}
+adjust_cell_type_lm_residuals <- function(gene_expr_df, deconvolution, targets) {
+  # Ensure deconvolution is a data frame and extract relevant data
+  #deconvolution <- as_tibble(deconvolution)
+  #cell_types <- deconvolution$cell_type
+  #deconvolution_samples <- deconvolution %>% 
+  #  dplyr::select(-cell_type)  # Remove the cell types column
+  
+  deconvolution_samples <- deconvolution %>% 
+    dplyr::select(-Mixture) %>% 
+    data.matrix()
+
+  gene_expr_df <- gene_expr_df[rownames(gene_expr_df) %in% targets,]
+  
+  # Create an empty matrix to store residuals
+  residual_matrix <- matrix(nrow = nrow(gene_expr_df), ncol = ncol(gene_expr_df))
+  rownames(residual_matrix) <- rownames(gene_expr_df)
+  colnames(residual_matrix) <- colnames(gene_expr_df)
+  
+  # Iterate over each gene
+  for (gene in rownames(gene_expr_df)) {
+    # Extract gene expression values for the gene of interest
+    gene_expression <- as.numeric(gene_expr_df[gene, ])
+    
+    # Check if the length of gene_expression matches the number of columns in deconvolution_samples
+    if (length(gene_expression) == nrow(deconvolution_samples)) {
+      # Perform linear regression
+      model <- lm(gene_expression ~ (deconvolution_samples))
+      
+      # Extract residuals (adjusted gene expression)
+      residual_expression <- residuals(model)
+      
+      # Extract intercept
+      intercept <- coef(model)["(Intercept)"]
+      
+      # Store residuals in the matrix ADDING THE INTERCEPT to retain a baseline level
+      residual_matrix[gene, ] <- residual_expression + intercept
+    } else {
+      warning(paste("Length of gene expression vector does not match number of columns in Deconvolution for gene:", gene))
+    }
+  }
+  
+  # Put gene names as column and return as tibble
+  residual_matrix <- cbind(rownames(residual_matrix), residual_matrix)
+  colnames(residual_matrix)[1] <- "genes"
+  
+  out_df <- as_tibble(residual_matrix) %>% 
+    mutate(across(-genes, as.numeric))
+  
+  return(out_df)
+}
+
+```
+
+```{r}
+
+adjusted_gexp_residuals <- list()
+
+c_type <- "CESC"
+  
+sample_ids <- intersect(colnames(gExp_mat_solidtumor_logval), 
+                        unlist(sample_id_solidtumor[[c_type]], 
+                               use.names = FALSE))
+gene_expr_df <- gExp_mat_solidtumor_logval[,sample_ids]
+  
+deconvolution <- decon_solidtumor_cibersort[[c_type]]
+
+adjusted_gexp_residuals[[c_type]] <- adjust_cell_type_lm_residuals(gene_expr_df, deconvolution, target_list)
+
+adjusted_gexp_residuals[[c_type]]
+```
+
+```{r}
+as.data.frame(adjusted_gexp_residuals[["CESC"]]) %>% 
+  pivot_longer(cols = -c(genes),
+               values_to = "gene_exp",
+               names_to = "samples") %>% 
+  ggplot(aes(x=gene_exp, y=genes)) +
+  geom_boxplot(fill = "lightsteelblue4", alpha = 0.5) +
+  labs(title = "Original gene expression",
+       x = "log2(tpm+0.001)",
+       y = "") + 
+  geom_vline(xintercept = 0, linetype = "dotted", color = "red") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16))
+```
+
+## Signature matrices:
+
+```{r}
+# Load signature matrices from cibersort and quantiseq.
+sig_matrix_quantiseq <- read_tsv("https://raw.githubusercontent.com/icbi-lab/quanTIseq/refs/heads/master/quantiseq/deconvolution/TIL10_signature.txt", show_col_types = F) %>% 
+  rename(gene_symbol = ID)
+
+  colnames(sig_matrix_quantiseq) <- gsub("\\.", " ", colnames(sig_matrix_quantiseq))
+
+# Genes removed from signature matrix when running RNAseq data (variable expression when RNAseq, included if micro array data)
+sig_matrix_quantiseq <- sig_matrix_quantiseq %>% 
+  filter(!gene_symbol %in% c("CD36", "CSTA", "NRGN", "C5AR2", "CEP19", "CYP4F3", "DOCK5", "HAL", "LRRK2", "LY96", "NINJ2", "PPP1R3B", "TECPR2", "TLR1", "TLR4", "TMEM154", "CD248"))
+
+
+sig_matrix_cibersort <- read_tsv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/CIBERSORT_package/LM22.txt", show_col_types = F) %>% 
+  rename(gene_symbol = `Gene symbol`,
+         Tregs = `T cells regulatory (Tregs)`)
+```
+
+```{r}
+# Genes and cell types in common: 
+# The cell types they have in common:
+cell_types_in_common_sigmat <- intersect(colnames(sig_matrix_quantiseq), colnames(sig_matrix_cibersort))[-1]
+
+# The gene_symbols they have in common: 
+genes_in_common_sigmat <- intersect(sig_matrix_quantiseq$gene_symbol, sig_matrix_cibersort$gene_symbol)
+
+sig_matrix_cibersort_in_common <- sig_matrix_cibersort %>% 
+  filter(gene_symbol %in% genes_in_common_sigmat) %>% 
+  dplyr::select(gene_symbol, cell_types_in_common_sigmat) %>% 
+  arrange(gene_symbol)
+ # mutate(across(-c(gene_symbol), function(x) 2^x))
+
+sig_matrix_quantiseq_in_common <- sig_matrix_quantiseq %>% 
+  filter(gene_symbol %in% genes_in_common_sigmat) %>% 
+  dplyr::select(gene_symbol, cell_types_in_common_sigmat) %>% 
+  arrange(gene_symbol)
+```
+
+```{r}
+# Does our data contain all the genes in the two matrices ? 
+
+xena_data_genes <- c(rownames(gExp_mat_solidtumor),
+                     rownames(gExp_mat_skcm[["SKCM_tumor"]]),
+                     rownames(gExp_mat_skcm[["SKCM_metastatic"]]),
+                     rownames(gExp_mat_laml)) %>% 
+  unique()
+
+intersect(sig_matrix_cibersort$gene_symbol, xena_data_genes) %>% 
+  length()
+
+intersect(sig_matrix_quantiseq$gene_symbol, xena_data_genes) %>% 
+  length()
+
+```
+
+```{r}
+sig_matrix_cibersort_t <- sig_matrix_cibersort %>% 
+  column_to_rownames(var = "gene_symbol") %>% 
+  t()
+sig_matrix_quantiseq_t <- sig_matrix_quantiseq %>% 
+  column_to_rownames(var = "gene_symbol") %>% 
+  t()
+
+# Calculate the distance matrix (Euclidean distance is commonly used for gene expression data)
+dist_matrix_cibersort <- dist(sig_matrix_cibersort_t, method = "euclidian")
+dist_matrix_quantiseq <- dist(sig_matrix_quantiseq_t, method = "euclidian")
+
+# Perform hierarchical clustering using complete linkage
+hclust_result_cibersort <- hclust(dist_matrix_cibersort, method = "complete")
+hclust_result_quantiseq <- hclust(dist_matrix_quantiseq, method = "complete")
+
+# Convert to a dendrogram object
+dendrogram_data_cibersort <- as.dendrogram(hclust_result_cibersort)
+dendrogram_data_quantiseq <- as.dendrogram(hclust_result_quantiseq)
+
+# Convert to ggplot-compatible format
+dendro_data_cibersort <- dendro_data(dendrogram_data_cibersort)
+dendro_data_quantiseq <- dendro_data(dendrogram_data_quantiseq)
+
+# Plot using R base: 
+plot(hclust_result_quantiseq,
+     main = "Cluster Dendogram of quanTIseq signature matrix (TIL10)")
+
+plot(hclust_result_cibersort,
+     main = "Cluster Dendogram of CIBERSORT signature matrix (LM22)")
+
+
+# Heatmap with dendogram: 
+#heatmap(t(sig_matrix_cibersort_t), 
+#        Rowv = NA,
+#        labRow = NA)
+
+
+
+# Convert the distance matrix to a matrix and then to a long format
+distance_matrix_df_cibersort <- as.data.frame(as.matrix(dist_matrix_cibersort))
+distance_matrix_df_cibersort$Cell_Type <- rownames(distance_matrix_df_cibersort)
+distance_long_cibersort <- melt(distance_matrix_df_cibersort, 
+                                id.vars = "Cell_Type")
+colnames(distance_long_cibersort) <- c("Cell_Type_1", "Cell_Type_2", "Distance")
+
+distance_matrix_df_quantiseq <- as.data.frame(as.matrix(dist_matrix_cibersort))
+distance_matrix_df_quantiseq$Cell_Type <- rownames(distance_matrix_df_quantiseq)
+distance_long_quantiseq <- melt(distance_matrix_df_quantiseq,
+                                id.vars = "Cell_Type")
+colnames(distance_long_quantiseq) <- c("Cell_Type_1", "Cell_Type_2", "Distance")
+
+distance_long_cibersort %>% 
+  arrange()
+  ggplot(aes(x = Cell_Type_1, y = Cell_Type_2, fill = Distance)) +
+    geom_tile() +
+    scale_fill_gradient(low = "white", high = "blue") +  # Adjust color gradient as needed
+    theme_minimal() +
+    labs(title = "Distance Matrix Heatmap",
+         x = "Cell Type",
+         y = "Cell Type",
+         fill = "Distance") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+  
+par(oma=c(5,3,5,3)) # all sides have 3 lines of space
+heatmap(as.matrix(dist_matrix_quantiseq),
+        main = "Cell type similarity based on quanTIseq signature matrix (TIL10)")
+#legend(x="right", legend=c("min", "med", "max"),fill=heat.colors(3))
+
+par(oma=c(7,3,3,3)) # all sides have 3 lines of space
+heatmap(as.matrix(dist_matrix_cibersort),
+        main = "Cell type similarity based on \nCIBERSORT signature matrix (LM22)")
+```
+
+```{r}
+# Plotting full signature matrix: 
+  
+sig_matrix_quantiseq %>% 
+ # mutate(across(-c(gene_symbol), ~log2(. + 0.001))) %>% 
+  pivot_longer(cols = -gene_symbol,
+               values_to = "TPM",
+               names_to = "cell_types") %>% 
+  ggplot(aes(x=cell_types, y=gene_symbol, fill=TPM)) +
+  geom_tile() +
+  theme_classic() +
+  scale_fill_gradient2(low = "#075AFF",
+                       mid = "#FFFFCC",
+                       high = "#FF0000",
+                       midpoint = 0) +
+  labs(title = "TIL10: quanTIseq signature matrix") +
+  theme(axis.title = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 90, vjust = 0.5),
+        legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        plot.title = element_text(size = 25))
+
+
+sig_matrix_cibersort %>% 
+  #mutate(across(-c(gene_symbol), ~log2(. + 0.001))) %>% 
+  pivot_longer(cols = -gene_symbol,
+               values_to = "RMA_normalized",
+               names_to = "cell_types") %>% 
+  ggplot(aes(x=cell_types, y=gene_symbol, fill=RMA_normalized)) +
+  geom_tile() +
+  theme_classic() +
+  scale_fill_gradient2(low = "#075AFF",
+                     mid = "#FFFFCC",
+                     high = "#FF0000",
+                     midpoint = 0) +
+  labs(title = "LM22: CIBERSORT signature matrix") +
+  theme(axis.title = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 90, vjust = 0.5),
+        legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        plot.title = element_text(size = 25))
+
+```
+
+```{r}
+# Plotting genes and cell types in common: 
+sig_matrix_cibersort_in_common %>% 
+  pivot_longer(cols = -gene_symbol,
+               values_to = "RMA_normalized",
+               names_to = "cell_types") %>% 
+  ggplot(aes(x=cell_types, y=gene_symbol, fill=RMA_normalized)) +
+  geom_tile() +
+  theme_classic() +
+  labs(title = "LM22: CIBERSORT signature matrix") +
+  theme(axis.title = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 30, vjust = 0.5),
+        legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        plot.title = element_text(size = 25))
+
+  
+sig_matrix_quantiseq_in_common %>% 
+  pivot_longer(cols = -gene_symbol,
+               values_to = "TPM",
+               names_to = "cell_types") %>% 
+  ggplot(aes(x=cell_types, y=gene_symbol, fill=TPM)) +
+  geom_tile() +
+  theme_classic() +
+  labs(title = "TIL10: quanTIseq signature matrix") +
+  theme(axis.title = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 30, vjust = 0.5),
+        legend.text = element_text(size = 15), 
+        legend.title = element_text(size = 15),
+        plot.title = element_text(size = 25))
+
+```
+
+## OLD
 
 ### Plots and tables
 
