@@ -1,0 +1,149 @@
+---
+title: "xena_data_limma"
+format: html
+editor: visual
+---
+
+## Load libraries
+
+```{r}
+library(tidyverse)
+library(limma)
+library(edgeR)
+```
+
+## Load data
+
+```{r}
+file_path_xenadata <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+
+file_name_pheno1 <- "TCGA_PANCAN_sampleType_primaryDisease"
+file_name_pheno2 <- "TCGA_PANCAN_curated_clinical_data"
+
+file_name_geneexp <- "TCGA_PANCAN_gene_expression_RNAseq_tpm_subset_cancertypes.tsv"
+
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
+```
+
+### Phenotype and sample IDs
+
+```{r}
+# Read tne phenotype data:
+df_st_pd <- read.csv(paste(file_path_xenadata, 
+                           file_name_pheno1, ".tsv", sep = ""),sep = "\t")
+df_clin_pd <- read.csv(paste(file_path_xenadata, 
+                             file_name_pheno2, ".tsv", sep = ""),sep = "\t")
+
+df_pheno <- df_clin_pd %>% 
+  full_join(df_st_pd, by = "sample")
+```
+
+```{r}
+# Collect sample IDs in lists
+sample_id_solidtumor <- list()
+sample_id_laml_skcm <- list()
+
+for (c_type in cancer_abbr_list){
+   df_pheno_c_type <- df_pheno %>% 
+    filter(cancer.type.abbreviation == c_type)
+   
+   # Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
+   # For Melanoma, both metastatic and tumor. 
+   if (c_type == "LAML"){
+     sample_id_laml_skcm[[c_type]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
+       dplyr::select(sample)
+     
+   } else if(c_type == "SKCM"){
+     sample_id_laml_skcm[["SKCM_tumor"]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Tumor") %>%
+       dplyr::select(sample)
+     
+     sample_id_laml_skcm[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Metastatic") %>%
+       dplyr::select(sample)
+     
+   } else {
+     sample_id_solidtumor[[c_type]] <- df_pheno_c_type %>% 
+       filter(sample_type == "Primary Tumor") %>%
+       dplyr::select(sample) 
+   }
+}
+```
+
+### Gene expression data
+
+```{r}
+# Load data: 
+if (!exists("df_data")){
+  df_data <- read.csv(paste0(file_path_xenadata, file_name_geneexp), sep = "\t")
+}
+
+# Change format of colnames to have "-" instead of ".":
+colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
+
+# Part into sub df with solid tumors, laml and skcm. 
+flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
+flat_sample_id_laml <- intersect(list(unlist(sample_id_laml_skcm[["LAML"]], use.names = FALSE))[[1]], colnames(df_data))
+
+df_solidtumor <- df_data %>% 
+  dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+df_laml <- df_data %>% 
+  dplyr::select(sample, all_of(flat_sample_id_laml)) %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  relocate(sample, gene_ensg_shrt)
+
+
+df_skcm <- list()
+
+for (skcm_type in names(sample_id_laml_skcm[-1])){
+  
+  flat_sample_id_skcm <- intersect(unlist(sample_id_laml_skcm[[skcm_type]], use.names = FALSE), colnames(df_data))
+  
+  df_skcm[[skcm_type]] <- df_data %>% 
+    dplyr::select(sample, all_of(flat_sample_id_skcm)) %>% 
+    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+    relocate(sample, gene_ensg_shrt)
+}
+```
+
+## Limma analysis
+
+```{r}
+# Looks like cpm and fpkm are better instead of TPM. Loading norm count PANCAN data:
+### NB!!! I will might need to use FPKM instead, not sure if norm count is the same as CPM.. For now, I will just use this norm count data to build the quarto. 
+
+if (!exists("df_norm_data")){
+  df_norm_data <- list()
+  
+  for (c_type in cancer_abbr_list){
+    file_name <- paste0(file_path_xenadata, 
+                        "/TCGA_", 
+                        c_type, 
+                        "_gene_expression_RNAseq_pancan_normalized.tsv")
+    if(file.exists(file_name)){
+      df_norm_data[[c_type]] <- read.csv(file_name, 
+                                       sep = "\t")
+    } else {
+      warning(paste0("File not found: ", file_name))
+    }
+  }
+}
+         
+
+```
+
+```{r}
+df_norm_ctype_data <- df_norm_data[[c_type]] %>% 
+  filter(sample %in% target_list) 
+
+df_norm_ctype_data %>% 
+  mutate(across(-c(sample), function(x) 2^x)) %>% 
+  column_to_rownames("sample") %>% 
+  as.matrix() %>% 
+  cpm(log = TRUE)
+```

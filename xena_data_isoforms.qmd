@@ -317,7 +317,6 @@ transcript_info_wSeq <- transcript_info_wSeq %>%
 transcript_info_protein <- transcript_info_wSeq %>% 
   dplyr::select(transcript_id, Protein, Biotype)
 
-target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
 ```
 
 ### Target sequences
@@ -356,6 +355,9 @@ prot_w_target_seq <- target_seq %>%
   unique() %>% 
   unlist(use.names = F) %>% 
   toupper()
+
+
+target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
 ```
 
 ### Percentage of expression
@@ -504,6 +506,31 @@ transcript_data_long_all %>%
 #    axis.title = element_text(size = 13),
     strip.background.x = element_blank()
     )
+
+
+c("BIRC7")
+
+transcript_data_long_all %>% 
+  dplyr::select(transcript_id, gene_id_b, Biotype) %>% 
+  mutate(Biotype = ifelse(Biotype == "target_epitope", "Protein coding", Biotype)) %>% 
+  distinct() %>% 
+  dplyr::select(-transcript_id) %>% 
+  group_by(gene_id_b, Biotype) %>% 
+  summarise(n=n()) %>% 
+  ggplot(aes(x=gene_id_b, y=n, fill = Biotype)) + 
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff")) +
+  xlab("Gene id") + 
+  ylab("Number of isoforms*") +
+  labs(title = "Number of isoforms related to target genes") + 
+  scale_y_continuous(limits = c(0,10), breaks = seq(0,10)) + 
+  theme(#legend.position = "none",
+        axis.text.x = element_text(angle=20, vjust = 0.8),
+        axis.title = element_text(size=15),
+        text = element_text(family = "serif"),
+        title = element_text(size = 20),
+        axis.text = element_text(size=10))
 
 
 ```
