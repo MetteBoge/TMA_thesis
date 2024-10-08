@@ -16,7 +16,9 @@ library(tidyverse)
 library(limma)
 #library(Glimma)
 library(ggbiplot)
+library(reshape2)
 library(edgeR)
+library(R.utils)
 ```
 
 ```{r}
@@ -43,6 +45,104 @@ df_pheno <- df_clin_pd %>%
 
 ```{r}
 # Load in more phenotype data
+
+for (c_type in cancer_abbr_list) {
+  download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
+                          c_type, 
+                          ".sampleMap%2F",
+                          c_type, 
+                          "_clinicalMatrix")
+  
+  file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
+  
+  
+  if (!(file.exists(file_name_pheno))){
+   download.file(download_link, file_name_pheno, mode = "wb")
+  } 
+  
+  # Load data tables to list: 
+  if (!exists("phenotype_ctype")){
+    phenotype_ctype <- list()
+    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+      rename(sample = sampleID)
+  } else if (!c_type %in% names(phenotype_ctype)){
+    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+      rename(sample = sampleID)
+  }
+}
+
+```
+
+```{r}
+
+# Load in the mutation data: 
+
+for (c_type in cancer_abbr_list) {
+  download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F", 
+                          c_type, 
+                          "_mc3_gene_level.txt.gz")
+  
+  file_name_mut <- paste0(file_path_xenadata, "TCGA_", c_type, "_non-silent_mutation")
+  
+  
+  if (!(file.exists(paste0(file_name_mut, ".tsv.gz")) | 
+        file.exists(paste0(file_name_mut, ".tsv")))){
+    download.file(download_link, paste0(file_name_mut, ".tsv.gz"), mode = "wb")
+  } 
+  if (!(file.exists(paste0(file_name_mut, ".tsv")))){
+    gunzip(paste0(file_name_mut, ".tsv.gz"))
+  }
+
+  
+  # Load data tables to list: 
+  if (!exists("mut_ctype")){
+    mut_ctype <- list()
+    mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                    sep = "\t")
+    
+    colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+    
+    # Filter to only contain mutations occuring in >= 5% of all samples: 
+    num_cols <- ncol(mut_ctype[[c_type]]) - 1
+    
+    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+      filter(rowSums(select(., -sample) == 1) >= (0.1*num_cols))
+    
+    # Change format to be compatible with phenotype data: 
+    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+      rename(mut_gene = sample) %>% 
+      pivot_longer(cols = -mut_gene,
+                   names_to = "sample",
+                   values_to = "mutation") %>% 
+      pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                  values_from = mutation, 
+                  names_prefix = "mut_")
+    
+  } else if (!c_type %in% names(mut_ctype)){
+    mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                    sep = "\t")
+    
+    colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+    
+    # Filter to only contain mutations occuring in >= 5% of all samples: 
+    num_cols <- ncol(mut_ctype[[c_type]]) - 1
+    
+    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+      filter(rowSums(select(., -sample) == 1) >= (0.1*num_cols))
+    
+    # Change format to be compatible with phenotype data: 
+    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+      rename(mut_gene = sample) %>% 
+      pivot_longer(cols = -mut_gene,
+                   names_to = "sample",
+                   values_to = "mutation") %>% 
+      pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                  values_from = mutation, 
+                  names_prefix = "mut_")
+  }
+}
+
+
 ```
 
 ```{r}
@@ -99,34 +199,9 @@ mat_exp_count <- df_expected_count %>%
 
 ## Limma workflow
 
-<https://www.bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html>
+(<https://www.bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html>)
 
 <https://biocellgen-public.svi.edu.au/sahmri-bulk-rnaseq/processing.html#Questions>
-
-```{r}
-mat_cpm <- cpm(mat_exp_count)
-mat_lcpm <- cpm(mat_exp_count, log = TRUE)
-
-```
-
-```{r}
-library(RColorBrewer)
-
-nsamples <- 12#ncol(mat_exp_count)
-
-col <- brewer.pal(nsamples, "Paired")
-
-par(mfrow=c(1,1))
-
-plot(density(mat_lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
-title(main="A. Raw data", xlab="Log-cpm")
-
-for (i in 2:nsamples){
-  den <- density(mat_lcpm[,i])
-  lines(den$x, den$y, col=col[i], lwd=2)
-}
-
-```
 
 ### Setup DGEList object
 
@@ -138,7 +213,7 @@ colnames(df_lib_size) <- c("sample", "lib_size")
 
 
 
-c_type <- "CESC"
+c_type <- "PAAD"
 
 # Exctract list of sample ids for the specific cancer type:
 if (!c_type %in% c("SKCM", "SKCM_tumor", "SKCM_metastatic", "LAML")){
@@ -167,9 +242,18 @@ df_lib_size_ctype <- df_lib_size %>%
   filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
   arrange(match(sample, colnames(mat_exp_count_ctype))) 
 
+
+# Common colnames in two phenotype dataframes: 
+com_cols <- intersect(colnames(df_pheno), colnames(phenotype_ctype[[c_type]]))
+rm_cols <- com_cols[com_cols != "sample"]
+
 # Filter out samples that are not in expected count data:
+# Add the extra ctype specific phenotype data: 
 df_pheno_2 <- df_pheno %>% 
-  filter(sample %in% colnames(mat_exp_count_ctype)) 
+  filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
+  select(-rm_cols) %>% 
+  left_join(phenotype_ctype[[c_type]], by = "sample")
+
 
 rownames(df_pheno_2) <- df_pheno_2$sample
 
@@ -189,21 +273,122 @@ dge <- DGEList(counts = mat_exp_count_ctype,
 
 ```
 
-## **Principal component analysis (PCA)**
+### **Principal component analysis (PCA)**
 
 ```{r}
-dge$samples$race
+dge$samples$X_GENOMIC_ID_TCGA_PAAD_mutation_broad_gene
+```
+
+```{r}
 
 pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
 summary(pca_analysis) 
 
-pca_plot <- ggbiplot::ggbiplot(pca_analysis, 
-                   groups = dge$samples$gender, 
+ggbiplot::ggbiplot(pca_analysis, 
+                   groups = dge$samples$neoplasm_histologic_grade, 
                    ellipse = TRUE,
                    var.axes = FALSE)
 
-pca_plot
+ggbiplot::ggbiplot(pca_analysis, 
+                   groups = dge$samples$maximum_tumor_dimension, 
+                   ellipse = FALSE,
+                   var.axes = FALSE)
 
+# age_at_initial_pathologic_diagnosis,anatomic_neoplasm_subdivision, gender, radiation_therapy, pathologic_stage, number_of_lymphnodes_positive_by_he, maximum_tumor_dimension, neoplasm_histologic_grade
+
+#anatomic_neoplasm_subdivision
+#pathologic_stage
+
+#cpm(dge, log=TRUE) %>% as.data.frame()
+```
+
+### Differential expression analysis
+
+Differential gene expression analysis is used to find genes that are significantly expressed in one group compared to another. limma-voom uses a moderated t-statistic, which has greater power than a normal t-test when applied to gene expression data. This is because the limma-voom t-statistic borrow information across genes for a gene expression dataset (using Bayesian statistics).
+
+```{r}
+rowSums(cpm(dge) > 1)
+
+# Density plot og gene expression
+dge %>% 
+  cpm(log = TRUE) %>% 
+  melt %>% 
+  dplyr::filter(is.finite(value)) %>% 
+  ggplot(aes(x = value, colour = Var2)) +
+  geom_density() + 
+  guides(colour = FALSE) +
+  labs(x = "logCPM", y = "Density")
+```
+
+#### Specify Design Matrix
+
+```{r}
+# pathologic_stage
+# Choosing here e.g. vital_status as group. 
+dge$samples$radiation_therapy
+
+design_mat <- model.matrix(~0 + radiation_therapy, data=dge$samples)
+
+# Remove some of the columns (discrepancy or no data)
+design_mat <- design_mat %>% 
+  as.data.frame() %>% 
+  select(radiation_therapyNO, radiation_therapyYES) %>% 
+  #filter_all(any_vars(.!=0)) %>% 
+  as.matrix()
+  
+```
+
+#### Apply voom transformation
+
+Voom transformation will transform the discrete counts of gene count data into log2-counts per million (logCPM). This also estimates the mean-variance relationship and uses this to compute appropriate observation-level weights (genes), while taking into account differences in library sizes between samples.
+
+This step makes the data ready for linear modelling.
+
+```{r}
+voomData <- voom(dge, design = design_mat, plot = TRUE)
+```
+
+We want it to be without low standard variations. Look at <https://stats.stackexchange.com/questions/160255/voom-mean-variance-trend-plot-how-to-interpret-the-plot> for reference.
+
+#### Define Comparison (Contrast) of Interest
+
+Here we define the contrast matrix, which contains the pairwise comparisons which we wish to test.
+
+```{r}
+contrasts_mat <- makeContrasts(
+  levels = colnames(design_mat),
+  radiation_therapy = radiation_therapyNO  - radiation_therapyYES
+)
+contrasts_mat
+```
+
+#### Fit a linear model for each gene
+
+Now a linear model is fitted for each gene using the voomData logCPM for each gene, the design matrix and the contrast matrix.
+
+`treat` applies Bayesian statistics to "borrow" information across the indiviual moderated t-test for each gene. This will increase the power to detect differentially expressed genes.
+
+In the code here below we define a log2-fold change greater than 1 to be determining if a gene is differentially expressed.
+
+```{r}
+fit <- lmFit(voomData, design_mat) %>%
+  contrasts.fit(contrasts_mat) %>%
+  treat() #lfc = 1
+```
+
+#### Identifying differentially expressed genes
+
+We will have to correct for multiple testing. A detail about multiple testing corrections can be found here: <https://physiology.med.cornell.edu/people/banfelder/qbio/resources_2008/1.5_GenespringMTC.pdf>.
+
+Here we use false discovery rate (FDR) method for correction. And set the significance cutoff at 0.05. This means that only genes with FDR-adjusted p-values \< 0.05 AND absolute log2 fold change of 1 or above will be considered significantly differentially expressed.
+
+```{r}
+results <- decideTests(fit, 
+                       p.value = 0.05,#1,#0.5,
+                       adjust.method = "fdr") 
+
+results %>% 
+  summary()
 ```
 
 # OLD
