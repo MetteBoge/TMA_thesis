@@ -4,15 +4,20 @@ format: html
 editor: visual
 ---
 
-## Load libraries
+```{r}
+# Control operations: 
+load_tpm <- FALSE
+```
+
+## Load libraries and data
 
 ```{r}
 library(tidyverse)
 library(limma)
+#library(Glimma)
+library(ggbiplot)
 library(edgeR)
 ```
-
-## Load data
 
 ```{r}
 file_path_xenadata <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
@@ -20,13 +25,10 @@ file_path_xenadata <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/1
 file_name_pheno1 <- "TCGA_PANCAN_sampleType_primaryDisease"
 file_name_pheno2 <- "TCGA_PANCAN_curated_clinical_data"
 
-file_name_geneexp <- "TCGA_PANCAN_gene_expression_RNAseq_tpm_subset_cancertypes.tsv"
 
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
 ```
-
-### Phenotype and sample IDs
 
 ```{r}
 # Read tne phenotype data:
@@ -37,6 +39,10 @@ df_clin_pd <- read.csv(paste(file_path_xenadata,
 
 df_pheno <- df_clin_pd %>% 
   full_join(df_st_pd, by = "sample")
+```
+
+```{r}
+# Load in more phenotype data
 ```
 
 ```{r}
@@ -72,50 +78,187 @@ for (c_type in cancer_abbr_list){
 }
 ```
 
+Seems like Limma and voom works best with raw counts or expected counts as input. <https://biostar.usegalaxy.org/p/10648/>.
+
+```{r}
+# Read expected counts
+if (!exists("df_expected_count")){
+  df_expected_count <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_goi.tsv"), 
+                                show_col_types = FALSE) %>% 
+    mutate(across(-c(sample), function(x) 2^x)) # Reverse log2
+}
+
+# Filter samples out which are not in phenotype data
+df_expected_count <- df_expected_count %>% 
+  dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count)))
+
+mat_exp_count <- df_expected_count %>% 
+  column_to_rownames("sample") %>% 
+  as.matrix()
+```
+
+## Limma workflow
+
+<https://www.bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html>
+
+<https://biocellgen-public.svi.edu.au/sahmri-bulk-rnaseq/processing.html#Questions>
+
+```{r}
+mat_cpm <- cpm(mat_exp_count)
+mat_lcpm <- cpm(mat_exp_count, log = TRUE)
+
+```
+
+```{r}
+library(RColorBrewer)
+
+nsamples <- 12#ncol(mat_exp_count)
+
+col <- brewer.pal(nsamples, "Paired")
+
+par(mfrow=c(1,1))
+
+plot(density(mat_lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="A. Raw data", xlab="Log-cpm")
+
+for (i in 2:nsamples){
+  den <- density(mat_lcpm[,i])
+  lines(den$x, den$y, col=col[i], lwd=2)
+}
+
+```
+
+### Setup DGEList object
+
+```{r}
+# Load in lib size (sum of gene counts (ALL GENES):
+df_lib_size <- read.csv(paste0(file_path_xenadata, "lib_size.txt"), sep = "\t")
+
+colnames(df_lib_size) <- c("sample", "lib_size")
+
+
+
+c_type <- "CESC"
+
+# Exctract list of sample ids for the specific cancer type:
+if (!c_type %in% c("SKCM", "SKCM_tumor", "SKCM_metastatic", "LAML")){
+  sample_id_ctype <- sample_id_solidtumor[[c_type]] %>% 
+    unlist(use.names = F) %>% 
+    intersect(colnames(mat_exp_count))
+
+} else if (c_type %in% c("SKCM_tumor", "SKCM_metastatic", "LAML")){
+  sample_id_ctype <- sample_id_laml_skcm[[c_type]] %>% 
+    unlist(use.names = F )%>% 
+    intersect(colnames(mat_exp_count))
+  
+} else if (c_type == "SKCM"){
+  sample_id_ctype <- c(sample_id_laml_skcm[["SKCM_tumor"]], sample_id_laml_skcm[["SKCM_metastatic"]]) %>% 
+    unlist(use.names = F) %>% 
+    intersect(colnames(mat_exp_count))
+}
+
+mat_exp_count_ctype <- mat_exp_count %>% 
+  as.data.frame() %>% 
+  select(sample_id_ctype) %>% 
+  as.matrix()
+
+# Make sure the samples appear in same order as for mat_exp_count_ctype
+df_lib_size_ctype <- df_lib_size %>% 
+  filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
+  arrange(match(sample, colnames(mat_exp_count_ctype))) 
+
+# Filter out samples that are not in expected count data:
+df_pheno_2 <- df_pheno %>% 
+  filter(sample %in% colnames(mat_exp_count_ctype)) 
+
+rownames(df_pheno_2) <- df_pheno_2$sample
+
+# Create dge object: 
+dge <- DGEList(counts = mat_exp_count_ctype, 
+               samples = df_pheno_2,
+               lib.size = df_lib_size_ctype$lib_size) %>% 
+  calcNormFactors("TMM") # Normalizing gene expression distributions. See factors like: dge$samples$norm.factors
+
+#dge$samples %>% 
+#  ggplot(aes(x = sample, y = lib.size)) +
+#  geom_bar(stat = "identity") +
+#  labs(y = "Library size (total number of mapped and quantified reads)",
+#       x = "Sample") +
+#  coord_flip() 
+
+
+```
+
+## **Principal component analysis (PCA)**
+
+```{r}
+dge$samples$race
+
+pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
+summary(pca_analysis) 
+
+pca_plot <- ggbiplot::ggbiplot(pca_analysis, 
+                   groups = dge$samples$gender, 
+                   ellipse = TRUE,
+                   var.axes = FALSE)
+
+pca_plot
+
+```
+
+# OLD
+
 ### Gene expression data
 
 ```{r}
-# Load data: 
-if (!exists("df_data")){
-  df_data <- read.csv(paste0(file_path_xenadata, file_name_geneexp), sep = "\t")
-}
+# Gene expression TPM data: 
 
-# Change format of colnames to have "-" instead of ".":
-colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
-
-# Part into sub df with solid tumors, laml and skcm. 
-flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
-flat_sample_id_laml <- intersect(list(unlist(sample_id_laml_skcm[["LAML"]], use.names = FALSE))[[1]], colnames(df_data))
-
-df_solidtumor <- df_data %>% 
-  dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
-
-df_laml <- df_data %>% 
-  dplyr::select(sample, all_of(flat_sample_id_laml)) %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  relocate(sample, gene_ensg_shrt)
-
-
-df_skcm <- list()
-
-for (skcm_type in names(sample_id_laml_skcm[-1])){
+if (load_tpm){
+  # Load data: 
+  if (!exists("df_data")){
+    df_data <- read.csv(paste0(file_path_xenadata, file_name_geneexp), sep = "\t")
+  }
   
-  flat_sample_id_skcm <- intersect(unlist(sample_id_laml_skcm[[skcm_type]], use.names = FALSE), colnames(df_data))
+  # Change format of colnames to have "-" instead of ".":
+  colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
   
-  df_skcm[[skcm_type]] <- df_data %>% 
-    dplyr::select(sample, all_of(flat_sample_id_skcm)) %>% 
+  # Part into sub df with solid tumors, laml and skcm. 
+  flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
+  flat_sample_id_laml <- intersect(list(unlist(sample_id_laml_skcm[["LAML"]], use.names = FALSE))[[1]], colnames(df_data))
+  
+  df_solidtumor <- df_data %>% 
+    dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
     mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
     relocate(sample, gene_ensg_shrt)
+  
+  df_laml <- df_data %>% 
+    dplyr::select(sample, all_of(flat_sample_id_laml)) %>% 
+    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+    relocate(sample, gene_ensg_shrt)
+  
+  
+  df_skcm <- list()
+  
+  for (skcm_type in names(sample_id_laml_skcm[-1])){
+    
+    flat_sample_id_skcm <- intersect(unlist(sample_id_laml_skcm[[skcm_type]], use.names = FALSE), colnames(df_data))
+    
+    df_skcm[[skcm_type]] <- df_data %>% 
+      dplyr::select(sample, all_of(flat_sample_id_skcm)) %>% 
+      mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+      relocate(sample, gene_ensg_shrt)
+  }
 }
+
 ```
 
 ## Limma analysis
 
 ```{r}
 # Looks like cpm and fpkm are better instead of TPM. Loading norm count PANCAN data:
-### NB!!! I will might need to use FPKM instead, not sure if norm count is the same as CPM.. For now, I will just use this norm count data to build the quarto. 
+### NB!!! I will might need to use FPKM instead, not sure if norm count is the same as CPM.. For now, I will just use this norm count data to build the quarto.
+
+# https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html
 
 if (!exists("df_norm_data")){
   df_norm_data <- list()
@@ -133,7 +276,6 @@ if (!exists("df_norm_data")){
     }
   }
 }
-         
 
 ```
 
@@ -141,9 +283,35 @@ if (!exists("df_norm_data")){
 df_norm_ctype_data <- df_norm_data[[c_type]] %>% 
   filter(sample %in% target_list) 
 
-df_norm_ctype_data %>% 
+df_norm_ctype_data_cpm <- df_norm_ctype_data %>% 
   mutate(across(-c(sample), function(x) 2^x)) %>% 
   column_to_rownames("sample") %>% 
   as.matrix() %>% 
   cpm(log = TRUE)
+
+df_norm_ctype_data_cpm %>% 
+  lmFit() %>% 
+  eBayes(trend=TRUE)
+```
+
+## TCGA data
+
+```{r}
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+```
+
+```{r}
+tcga_data_list <- list()
+
+sample_type <- "Primary Tumor"
+
+project_name <- paste0("TCGA-", c_type)
+query <- GDCquery(project = project_name,
+                  data.category = "Transcriptome Profiling",
+                  data.type = "Gene Expression Quantification",
+                  workflow.type = "STAR - Counts", 
+                  sample.type = sample_type)
+
+tcga_data_list[[c_type]] <- GDCdownload(query)
 ```
