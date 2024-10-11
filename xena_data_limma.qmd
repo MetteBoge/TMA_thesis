@@ -75,12 +75,17 @@ for (c_type in cancer_abbr_list) {
 
 ```{r}
 
+top10_mutations <- list()
+
 # Load in the mutation data: 
 
 for (c_type in cancer_abbr_list) {
   download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F", 
                           c_type, 
                           "_mc3_gene_level.txt.gz")
+  if (c_type == "LAML"){
+    download_link <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2Fmutation_wustl_gene.gz"
+  }
   
   file_name_mut <- paste0(file_path_xenadata, "TCGA_", c_type, "_non-silent_mutation")
   
@@ -103,10 +108,16 @@ for (c_type in cancer_abbr_list) {
     colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
     
     # Filter to only contain mutations occuring in >= 5% of all samples: 
-    num_cols <- ncol(mut_ctype[[c_type]]) - 1
+    #num_cols <- ncol(mut_ctype[[c_type]]) - 1
     
+    # Keep only top 10 most mutated genes: 
     mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      filter(rowSums(select(., -sample) == 1) >= (0.1*num_cols))
+      mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+      arrange(desc(count_ones)) %>% 
+      slice_head(n = 10) %>% 
+      select(-count_ones) %>% 
+      mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+      mutate(across(everything(), ~replace(., . ==  0 , "WT")))
     
     # Change format to be compatible with phenotype data: 
     mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
@@ -124,11 +135,15 @@ for (c_type in cancer_abbr_list) {
     
     colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
     
-    # Filter to only contain mutations occuring in >= 5% of all samples: 
-    num_cols <- ncol(mut_ctype[[c_type]]) - 1
-    
+    # Keep only top 10 most mutated genes: 
     mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      filter(rowSums(select(., -sample) == 1) >= (0.1*num_cols))
+      mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+      arrange(desc(count_ones)) %>% 
+      slice_head(n = 10) %>% 
+      select(-count_ones) %>% 
+      mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+      mutate(across(everything(), ~replace(., . ==  0 , "WT")))
+      
     
     # Change format to be compatible with phenotype data: 
     mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
@@ -140,9 +155,13 @@ for (c_type in cancer_abbr_list) {
                   values_from = mutation, 
                   names_prefix = "mut_")
   }
+  
+  top10_mutations <- c(top10_mutations, colnames(mut_ctype[[c_type]]))
 }
 
-
+top10_mutations <- top10_mutations %>% unlist() %>%  unique() 
+top10_mutations <- top10_mutations[-1]
+top10_mutations <- gsub("mut_", "", top10_mutations)
 ```
 
 ```{r}
@@ -192,7 +211,22 @@ if (!exists("df_expected_count")){
 df_expected_count <- df_expected_count %>% 
   dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count)))
 
-mat_exp_count <- df_expected_count %>% 
+# Change gene IDs to gene names: 
+geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
+geneName_ensg <- geneName_ensg %>% 
+  rename(gene_ensg_shrt = converted_alias) %>% 
+  dplyr::select(name, gene_ensg_shrt)
+
+df_expected_count <- df_expected_count %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  select(-sample) %>% 
+  relocate(gene_ensg_shrt) %>% 
+  left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
+  rename(sample = name) %>% 
+  relocate(sample) %>% 
+  select(-gene_ensg_shrt)
+
+mat_exp_count <-  df_expected_count %>% 
   column_to_rownames("sample") %>% 
   as.matrix()
 ```
@@ -210,8 +244,6 @@ mat_exp_count <- df_expected_count %>%
 df_lib_size <- read.csv(paste0(file_path_xenadata, "lib_size.txt"), sep = "\t")
 
 colnames(df_lib_size) <- c("sample", "lib_size")
-
-
 
 c_type <- "PAAD"
 
@@ -249,11 +281,19 @@ rm_cols <- com_cols[com_cols != "sample"]
 
 # Filter out samples that are not in expected count data:
 # Add the extra ctype specific phenotype data: 
+# Add mutation data for top 10 most mutated genes: 
 df_pheno_2 <- df_pheno %>% 
   filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
   select(-rm_cols) %>% 
-  left_join(phenotype_ctype[[c_type]], by = "sample")
+  left_join(phenotype_ctype[[c_type]], by = "sample") %>% 
+  left_join(mut_ctype[[c_type]], by = "sample")
+  
+# Change blank cells to NA
+df_pheno_2[df_pheno_2 == ""] <- NA
 
+# Remove columns only consisting of NAs: 
+df_pheno_2 <- df_pheno_2 %>% 
+  select_if(function(x) { sum (!is.na(x)) >0})
 
 rownames(df_pheno_2) <- df_pheno_2$sample
 
@@ -263,29 +303,24 @@ dge <- DGEList(counts = mat_exp_count_ctype,
                lib.size = df_lib_size_ctype$lib_size) %>% 
   calcNormFactors("TMM") # Normalizing gene expression distributions. See factors like: dge$samples$norm.factors
 
-#dge$samples %>% 
-#  ggplot(aes(x = sample, y = lib.size)) +
-#  geom_bar(stat = "identity") +
-#  labs(y = "Library size (total number of mapped and quantified reads)",
-#       x = "Sample") +
-#  coord_flip() 
-
 
 ```
 
 ### **Principal component analysis (PCA)**
 
 ```{r}
-dge$samples$X_GENOMIC_ID_TCGA_PAAD_mutation_broad_gene
+#dge$samples$X_GENOMIC_ID_TCGA_PAAD_mutation_broad_gene
 ```
 
 ```{r}
+# Plotting PCA
+
 
 pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
 summary(pca_analysis) 
 
 ggbiplot::ggbiplot(pca_analysis, 
-                   groups = dge$samples$neoplasm_histologic_grade, 
+                   groups = dge$samples$mut_TP53, 
                    ellipse = TRUE,
                    var.axes = FALSE)
 
@@ -325,16 +360,17 @@ dge %>%
 ```{r}
 # pathologic_stage
 # Choosing here e.g. vital_status as group. 
-dge$samples$radiation_therapy
+dge$samples$mut_KRAS %>%  length()
 
-design_mat <- model.matrix(~0 + radiation_therapy, data=dge$samples)
+#options(na.action='na.omit') # ignore NAs (default)
+design_mat <- model.matrix(~0 + mut_KRAS, data=dge$samples)
 
 # Remove some of the columns (discrepancy or no data)
-design_mat <- design_mat %>% 
-  as.data.frame() %>% 
-  select(radiation_therapyNO, radiation_therapyYES) %>% 
-  #filter_all(any_vars(.!=0)) %>% 
-  as.matrix()
+#design_mat <- design_mat %>% 
+#  as.data.frame() %>% 
+#  select(mut_TP53NO, mut_TP53YES) %>% 
+#  #filter_all(any_vars(.!=0)) %>% 
+#  as.matrix()
   
 ```
 
@@ -345,7 +381,14 @@ Voom transformation will transform the discrete counts of gene count data into l
 This step makes the data ready for linear modelling.
 
 ```{r}
-voomData <- voom(dge, design = design_mat, plot = TRUE)
+# Filter dge object to only contain samples from design matrix (NAs removed);
+# Get the sample names from the design matrix and dge object
+design_samples <- rownames(design_mat)
+# Filter the dge object to keep only the common samples
+dge_filtered <- dge[, design_samples]
+
+
+voomData <- voom(dge_filtered, design = design_mat, plot = TRUE)
 ```
 
 We want it to be without low standard variations. Look at <https://stats.stackexchange.com/questions/160255/voom-mean-variance-trend-plot-how-to-interpret-the-plot> for reference.
@@ -355,9 +398,11 @@ We want it to be without low standard variations. Look at <https://stats.stackex
 Here we define the contrast matrix, which contains the pairwise comparisons which we wish to test.
 
 ```{r}
+design_mat_colnames <- colnames(design_mat)
+
 contrasts_mat <- makeContrasts(
   levels = colnames(design_mat),
-  radiation_therapy = radiation_therapyNO  - radiation_therapyYES
+  mut_KRAS = mut_KRASMUT - mut_KRASWT
 )
 contrasts_mat
 ```
@@ -373,7 +418,7 @@ In the code here below we define a log2-fold change greater than 1 to be determi
 ```{r}
 fit <- lmFit(voomData, design_mat) %>%
   contrasts.fit(contrasts_mat) %>%
-  treat() #lfc = 1
+  treat(lfc = 1) #lfc = 1 (default = 0.2630344)
 ```
 
 #### Identifying differentially expressed genes
@@ -389,6 +434,59 @@ results <- decideTests(fit,
 
 results %>% 
   summary()
+```
+
+#### Results
+
+In order to extract out the differentially expressed genes, we use the `topTreat` function from limma. Each row is a gene and columns contain information about p-value, fdr-adjusted p-value (ajd.P.Val), t-statistic (t), log2 fold change (logFC) and more.
+
+```{r}
+allDEresults <- topTreat(fit, 
+                         coef = "mut_KRAS", 
+                         number = Inf, 
+                         adjust.method = "fdr") %>%
+  as.data.frame() 
+
+# Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05. and absolute log2 fold change is greater than 1. 
+allDEresults <- allDEresults %>%
+  dplyr::mutate(isSignificant = case_when(
+    adj.P.Val < 0.05 & abs(logFC) > 1 ~ TRUE, 
+    TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
+  ))
+
+sigDEresults <- allDEresults %>%
+  dplyr::filter(isSignificant == TRUE)
+
+
+allDEresults
+sigDEresults
+```
+
+#### Volcano plot
+
+I will skip this, because it makes no sense when I only use 14 genes.
+
+#### Boxplot
+
+Looking at the expression of
+
+```{r}
+expressionOf_genes <- dge %>% 
+  cpm(log = TRUE) %>%
+  as.data.frame %>%
+  rownames_to_column("gene") %>%
+  #dplyr::filter(gene == "CD177") %>%
+  melt() %>%
+  rename(sample = variable,
+         logCPM = value) %>% 
+  left_join(dge$samples, by = "sample")
+s
+expressionOf_genes
+
+expressionOf_genes %>% 
+  ggplot(aes(x=gene, y = logCPM, fill = mut_KRAS)) +
+  geom_boxplot()
+
 ```
 
 # OLD
