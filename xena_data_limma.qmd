@@ -7,6 +7,9 @@ editor: visual
 ```{r}
 # Control operations: 
 load_tpm <- FALSE
+
+# Until I decide to loop, define cancer type here: 
+c_type <- "PAAD"
 ```
 
 ## Load libraries and data
@@ -19,6 +22,7 @@ library(ggbiplot)
 library(reshape2)
 library(edgeR)
 library(R.utils)
+library(magrittr)
 ```
 
 ```{r}
@@ -46,30 +50,30 @@ df_pheno <- df_clin_pd %>%
 ```{r}
 # Load in more phenotype data
 
-for (c_type in cancer_abbr_list) {
-  download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
-                          c_type, 
-                          ".sampleMap%2F",
-                          c_type, 
-                          "_clinicalMatrix")
-  
-  file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
-  
-  
-  if (!(file.exists(file_name_pheno))){
-   download.file(download_link, file_name_pheno, mode = "wb")
-  } 
-  
-  # Load data tables to list: 
-  if (!exists("phenotype_ctype")){
-    phenotype_ctype <- list()
-    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
-      rename(sample = sampleID)
-  } else if (!c_type %in% names(phenotype_ctype)){
-    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
-      rename(sample = sampleID)
-  }
+#for (c_type in cancer_abbr_list) {
+download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
+                        c_type, 
+                        ".sampleMap%2F",
+                        c_type, 
+                        "_clinicalMatrix")
+
+file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
+
+
+if (!(file.exists(file_name_pheno))){
+ download.file(download_link, file_name_pheno, mode = "wb")
+} 
+
+# Load data tables to list: 
+if (!exists("phenotype_ctype")){
+  phenotype_ctype <- list()
+  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+    rename(sample = sampleID)
+} else if (!c_type %in% names(phenotype_ctype)){
+  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+    rename(sample = sampleID)
 }
+#}
 
 ```
 
@@ -79,85 +83,85 @@ top10_mutations <- list()
 
 # Load in the mutation data: 
 
-for (c_type in cancer_abbr_list) {
-  download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F", 
-                          c_type, 
-                          "_mc3_gene_level.txt.gz")
-  if (c_type == "LAML"){
-    download_link <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2Fmutation_wustl_gene.gz"
-  }
-  
-  file_name_mut <- paste0(file_path_xenadata, "TCGA_", c_type, "_non-silent_mutation")
-  
-  
-  if (!(file.exists(paste0(file_name_mut, ".tsv.gz")) | 
-        file.exists(paste0(file_name_mut, ".tsv")))){
-    download.file(download_link, paste0(file_name_mut, ".tsv.gz"), mode = "wb")
-  } 
-  if (!(file.exists(paste0(file_name_mut, ".tsv")))){
-    gunzip(paste0(file_name_mut, ".tsv.gz"))
-  }
-
-  
-  # Load data tables to list: 
-  if (!exists("mut_ctype")){
-    mut_ctype <- list()
-    mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
-                                    sep = "\t")
-    
-    colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
-    
-    # Filter to only contain mutations occuring in >= 5% of all samples: 
-    #num_cols <- ncol(mut_ctype[[c_type]]) - 1
-    
-    # Keep only top 10 most mutated genes: 
-    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
-      arrange(desc(count_ones)) %>% 
-      slice_head(n = 10) %>% 
-      select(-count_ones) %>% 
-      mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
-      mutate(across(everything(), ~replace(., . ==  0 , "WT")))
-    
-    # Change format to be compatible with phenotype data: 
-    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      rename(mut_gene = sample) %>% 
-      pivot_longer(cols = -mut_gene,
-                   names_to = "sample",
-                   values_to = "mutation") %>% 
-      pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
-                  values_from = mutation, 
-                  names_prefix = "mut_")
-    
-  } else if (!c_type %in% names(mut_ctype)){
-    mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
-                                    sep = "\t")
-    
-    colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
-    
-    # Keep only top 10 most mutated genes: 
-    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
-      arrange(desc(count_ones)) %>% 
-      slice_head(n = 10) %>% 
-      select(-count_ones) %>% 
-      mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
-      mutate(across(everything(), ~replace(., . ==  0 , "WT")))
-      
-    
-    # Change format to be compatible with phenotype data: 
-    mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
-      rename(mut_gene = sample) %>% 
-      pivot_longer(cols = -mut_gene,
-                   names_to = "sample",
-                   values_to = "mutation") %>% 
-      pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
-                  values_from = mutation, 
-                  names_prefix = "mut_")
-  }
-  
-  top10_mutations <- c(top10_mutations, colnames(mut_ctype[[c_type]]))
+#for (c_type in cancer_abbr_list) {
+download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F", 
+                        c_type, 
+                        "_mc3_gene_level.txt.gz")
+if (c_type == "LAML"){
+  download_link <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2Fmutation_wustl_gene.gz"
 }
+
+file_name_mut <- paste0(file_path_xenadata, "TCGA_", c_type, "_non-silent_mutation")
+
+
+if (!(file.exists(paste0(file_name_mut, ".tsv.gz")) | 
+      file.exists(paste0(file_name_mut, ".tsv")))){
+  download.file(download_link, paste0(file_name_mut, ".tsv.gz"), mode = "wb")
+} 
+if (!(file.exists(paste0(file_name_mut, ".tsv")))){
+  gunzip(paste0(file_name_mut, ".tsv.gz"))
+}
+
+
+# Load data tables to list: 
+if (!exists("mut_ctype")){
+  mut_ctype <- list()
+  mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                  sep = "\t")
+  
+  colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+  
+  # Filter to only contain mutations occuring in >= 5% of all samples: 
+  #num_cols <- ncol(mut_ctype[[c_type]]) - 1
+  
+  # Keep only top 10 most mutated genes: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+    arrange(desc(count_ones)) %>% 
+    slice_head(n = 10) %>% 
+    select(-count_ones) %>% 
+    mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+    mutate(across(everything(), ~replace(., . ==  0 , "WT")))
+  
+  # Change format to be compatible with phenotype data: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    rename(mut_gene = sample) %>% 
+    pivot_longer(cols = -mut_gene,
+                 names_to = "sample",
+                 values_to = "mutation") %>% 
+    pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                values_from = mutation, 
+                names_prefix = "mut_")
+  
+} else if (!c_type %in% names(mut_ctype)){
+  mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                  sep = "\t")
+  
+  colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+  
+  # Keep only top 10 most mutated genes: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    mutate(count_ones = rowSums(select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+    arrange(desc(count_ones)) %>% 
+    slice_head(n = 10) %>% 
+    select(-count_ones) %>% 
+    mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+    mutate(across(everything(), ~replace(., . ==  0 , "WT")))
+    
+  
+  # Change format to be compatible with phenotype data: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    rename(mut_gene = sample) %>% 
+    pivot_longer(cols = -mut_gene,
+                 names_to = "sample",
+                 values_to = "mutation") %>% 
+    pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                values_from = mutation, 
+                names_prefix = "mut_")
+}
+
+top10_mutations <- c(top10_mutations, colnames(mut_ctype[[c_type]]))
+#}
 
 top10_mutations <- top10_mutations %>% unlist() %>%  unique() 
 top10_mutations <- top10_mutations[-1]
@@ -169,66 +173,72 @@ top10_mutations <- gsub("mut_", "", top10_mutations)
 sample_id_solidtumor <- list()
 sample_id_laml_skcm <- list()
 
-for (c_type in cancer_abbr_list){
-   df_pheno_c_type <- df_pheno %>% 
-    filter(cancer.type.abbreviation == c_type)
-   
-   # Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
-   # For Melanoma, both metastatic and tumor. 
-   if (c_type == "LAML"){
-     sample_id_laml_skcm[[c_type]] <- df_pheno_c_type %>% 
-       filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
-       dplyr::select(sample)
-     
-   } else if(c_type == "SKCM"){
-     sample_id_laml_skcm[["SKCM_tumor"]] <- df_pheno_c_type %>% 
-       filter(sample_type == "Primary Tumor") %>%
-       dplyr::select(sample)
-     
-     sample_id_laml_skcm[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
-       filter(sample_type == "Metastatic") %>%
-       dplyr::select(sample)
-     
-   } else {
-     sample_id_solidtumor[[c_type]] <- df_pheno_c_type %>% 
-       filter(sample_type == "Primary Tumor") %>%
-       dplyr::select(sample) 
-   }
+#for (c_type in cancer_abbr_list){
+df_pheno_c_type <- df_pheno %>% 
+filter(cancer.type.abbreviation == c_type)
+
+# Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
+# For Melanoma, both metastatic and tumor. 
+if (c_type == "LAML"){
+ sample_id_laml_skcm[[c_type]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
+   dplyr::select(sample)
+ 
+} else if(c_type == "SKCM"){
+ sample_id_laml_skcm[["SKCM_tumor"]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Tumor") %>%
+   dplyr::select(sample)
+ 
+ sample_id_laml_skcm[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Metastatic") %>%
+   dplyr::select(sample)
+ 
+} else {
+ sample_id_solidtumor[[c_type]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Tumor") %>%
+   dplyr::select(sample) 
 }
+#}
 ```
 
 Seems like Limma and voom works best with raw counts or expected counts as input. <https://biostar.usegalaxy.org/p/10648/>.
 
 ```{r}
-# Read expected counts
+# Load in expected count data: 
+
 if (!exists("df_expected_count")){
-  df_expected_count <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_goi.tsv"), 
+  df_expected_count <- list()
+  
+  #for (c_type in cancer_abbr_list){
+  
+  df_expected_count[[c_type]] <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_", c_type, ".tsv"), 
                                 show_col_types = FALSE) %>% 
     mutate(across(-c(sample), function(x) 2^x)) # Reverse log2
+  
+  # Filter samples out which are not in phenotype data
+  df_expected_count[[c_type]] <- df_expected_count[[c_type]] %>% 
+    dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count[[c_type]])))
+  
+  # Change gene IDs to gene names: 
+  geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
+  geneName_ensg <- geneName_ensg %>% 
+    rename(gene_ensg_shrt = converted_alias) %>% 
+    dplyr::select(name, gene_ensg_shrt)
+  
+  df_expected_count[[c_type]] <- df_expected_count[[c_type]] %>% 
+    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+    select(-sample) %>% 
+    relocate(gene_ensg_shrt) %>% 
+    left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
+    rename(sample = name) %>% 
+    relocate(sample) %>% 
+    mutate(sample = ifelse(is.na(sample), gene_ensg_shrt, sample)) %>% 
+    select(-gene_ensg_shrt)
+  
+  #}
 }
 
-# Filter samples out which are not in phenotype data
-df_expected_count <- df_expected_count %>% 
-  dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count)))
 
-# Change gene IDs to gene names: 
-geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
-geneName_ensg <- geneName_ensg %>% 
-  rename(gene_ensg_shrt = converted_alias) %>% 
-  dplyr::select(name, gene_ensg_shrt)
-
-df_expected_count <- df_expected_count %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  select(-sample) %>% 
-  relocate(gene_ensg_shrt) %>% 
-  left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
-  rename(sample = name) %>% 
-  relocate(sample) %>% 
-  select(-gene_ensg_shrt)
-
-mat_exp_count <-  df_expected_count %>% 
-  column_to_rownames("sample") %>% 
-  as.matrix()
 ```
 
 ## Limma workflow
@@ -240,40 +250,28 @@ mat_exp_count <-  df_expected_count %>%
 ### Setup DGEList object
 
 ```{r}
-# Load in lib size (sum of gene counts (ALL GENES):
-df_lib_size <- read.csv(paste0(file_path_xenadata, "lib_size.txt"), sep = "\t")
-
-colnames(df_lib_size) <- c("sample", "lib_size")
-
-c_type <- "PAAD"
+# for (c_type in cancer_abbr_list){
 
 # Exctract list of sample ids for the specific cancer type:
-if (!c_type %in% c("SKCM", "SKCM_tumor", "SKCM_metastatic", "LAML")){
-  sample_id_ctype <- sample_id_solidtumor[[c_type]] %>% 
-    unlist(use.names = F) %>% 
-    intersect(colnames(mat_exp_count))
+#if (!c_type %in% c("SKCM", "SKCM_tumor", "SKCM_metastatic", "LAML")){
+#  sample_id_ctype <- sample_id_solidtumor[[c_type]] %>% 
+#    unlist(use.names = F) %>% 
+#    intersect(colnames(mat_exp_count))
 
-} else if (c_type %in% c("SKCM_tumor", "SKCM_metastatic", "LAML")){
-  sample_id_ctype <- sample_id_laml_skcm[[c_type]] %>% 
-    unlist(use.names = F )%>% 
-    intersect(colnames(mat_exp_count))
+#} else if (c_type %in% c("SKCM_tumor", "SKCM_metastatic", "LAML")){
+#  sample_id_ctype <- sample_id_laml_skcm[[c_type]] %>% 
+#    unlist(use.names = F )%>% 
+#    intersect(colnames(mat_exp_count))
   
-} else if (c_type == "SKCM"){
-  sample_id_ctype <- c(sample_id_laml_skcm[["SKCM_tumor"]], sample_id_laml_skcm[["SKCM_metastatic"]]) %>% 
-    unlist(use.names = F) %>% 
-    intersect(colnames(mat_exp_count))
-}
+#} else if (c_type == "SKCM"){
+#  sample_id_ctype <- c(sample_id_laml_skcm[["SKCM_tumor"]], sample_id_laml_skcm[["SKCM_metastatic"]]) %>% 
+#    unlist(use.names = F) %>% 
+#    intersect(colnames(mat_exp_count))
+#}
 
-mat_exp_count_ctype <- mat_exp_count %>% 
-  as.data.frame() %>% 
-  select(sample_id_ctype) %>% 
+mat_exp_count_ctype <- df_expected_count[[c_type]] %>% 
+  column_to_rownames("sample") %>% 
   as.matrix()
-
-# Make sure the samples appear in same order as for mat_exp_count_ctype
-df_lib_size_ctype <- df_lib_size %>% 
-  filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
-  arrange(match(sample, colnames(mat_exp_count_ctype))) 
-
 
 # Common colnames in two phenotype dataframes: 
 com_cols <- intersect(colnames(df_pheno), colnames(phenotype_ctype[[c_type]]))
@@ -299,10 +297,9 @@ rownames(df_pheno_2) <- df_pheno_2$sample
 
 # Create dge object: 
 dge <- DGEList(counts = mat_exp_count_ctype, 
-               samples = df_pheno_2,
-               lib.size = df_lib_size_ctype$lib_size) %>% 
+               samples = df_pheno_2) %>% 
   calcNormFactors("TMM") # Normalizing gene expression distributions. See factors like: dge$samples$norm.factors
-
+#}
 
 ```
 
@@ -317,7 +314,7 @@ dge <- DGEList(counts = mat_exp_count_ctype,
 
 
 pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
-summary(pca_analysis) 
+#summary(pca_analysis) 
 
 ggbiplot::ggbiplot(pca_analysis, 
                    groups = dge$samples$mut_TP53, 
@@ -341,18 +338,212 @@ ggbiplot::ggbiplot(pca_analysis,
 
 Differential gene expression analysis is used to find genes that are significantly expressed in one group compared to another. limma-voom uses a moderated t-statistic, which has greater power than a normal t-test when applied to gene expression data. This is because the limma-voom t-statistic borrow information across genes for a gene expression dataset (using Bayesian statistics).
 
+#### Filtering data
+
+To increase the power when detecting differential expressed genes, we have to filter out low-expressed genes. Use a density plot to determine the cut off for low-expressed genes (see below). A common guideline is to keep genes expressed at least 1 cpm in the smallest group of samples (e.g. 10 healthy vs 44 sick). -we dont have a specific group, but we can say e.g. 1 cpm in at least 25% of samples (around same cutoff as 10/44).
+
 ```{r}
-rowSums(cpm(dge) > 1)
+# Number of samples: 
+n_samples <- dge$samples$sample %>% length()
+
+keepTheseGenes <- rowSums(cpm(dge) > 1) >= 0.25*n_samples
 
 # Density plot og gene expression
-dge %>% 
+#dge %>% 
+#  cpm(log = TRUE) %>% 
+#  melt %>% 
+#  dplyr::filter(is.finite(value)) %>% 
+#  ggplot(aes(x = value, colour = Var2)) +
+#  geom_density() + 
+#  guides(colour = FALSE) +
+#  labs(x = "logCPM", y = "Density")
+```
+
+```{r}
+beforeFiltering_plot <- dge %>% 
   cpm(log = TRUE) %>% 
   melt %>% 
   dplyr::filter(is.finite(value)) %>% 
   ggplot(aes(x = value, colour = Var2)) +
   geom_density() + 
   guides(colour = FALSE) +
+  ggtitle("A. Before filtering", subtitle = paste0(nrow(dge), " genes")) +
   labs(x = "logCPM", y = "Density")
+
+afterFiltering_plot <- dge %>% 
+  cpm(log = TRUE) %>% 
+  magrittr::extract(keepTheseGenes,) %>%
+  melt %>% 
+  dplyr::filter(is.finite(value)) %>% 
+  ggplot(aes(x = value, colour = Var2)) +
+  geom_density() + 
+  guides(colour = FALSE) +
+  ggtitle("B. After filtering", subtitle = paste0(table(keepTheseGenes)[[2]], " genes"))+
+  labs(x = "logCPM", y = "Density")
+
+beforeFiltering_plot
+afterFiltering_plot
+```
+
+```{r}
+# Update the dge object: 
+
+dge <- dge[keepTheseGenes,,keep.lib.sizes = FALSE] 
+
+```
+
+#### Automated phenotype analysis
+
+```{r}
+# List of top 10 mutations in this c_type: 
+mut_list <- dge$samples %>% 
+  colnames() %>% 
+  .[str_detect(., "mut_")]
+
+# CREATE DESIGN AND CONTRAST MATRICES
+# Loop through all phenotypes and create design and contrast matrices
+mut_matrices <- list() 
+allDEresults <- list()
+
+for (mut in mut_list) {
+  print(mut)
+  # CREATE DESIGN AND CONTRAST MATRICES
+  # Design matrix
+  design_mat <- model.matrix(as.formula(paste0("~0 + ", mut)), data = dge$samples)
+  
+  # Contrast matrix
+  contrasts_mat <- makeContrasts(
+    levels = colnames(design_mat),
+    contrast = paste0(mut, "MUT - ", mut, "WT") # parse(contrast_formula)
+  )
+  colnames(contrasts_mat) <- mut
+   
+  # VOOM TRANSFORMATION: 
+  # Filter dge object to only contain samples from design matrix (NAs removed);
+  # Get the sample names from the design matrix and dge object
+  # Filter the dge object to keep only the common samples
+  dge_filtered <- dge[, rownames(design_mat)]
+  
+  voomData <- voom(dge_filtered, design = design_mat, plot = FALSE)
+  
+  mut_matrices[[mut]] <- list(design = design_mat, contrast = contrasts_mat)
+  
+  fit <- lmFit(voomData, design_mat) %>%
+    contrasts.fit(contrasts_mat) %>%
+    treat() #lfc = 1 (default = 0.2630344)
+  
+  allDEresults[[mut]] <- topTreat(fit, 
+                           coef = mut, 
+                           number = Inf, 
+                           adjust.method = "fdr") %>%
+    as.data.frame() %>% 
+  # Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05.     and absolute log2 fold change is greater than 1. 
+    dplyr::mutate(isSignificant = case_when(
+      adj.P.Val < 0.05 ~ TRUE, # & abs(logFC) > 1
+      TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
+    )) %>% 
+    rownames_to_column("sample") %>% 
+    filter(!str_detect(sample, "ENSG")) # Keep only our target genes
+}
+
+# Example: access the design and contrast matrices for the first phenotype
+mut_matrices[[2]]$design
+mut_matrices[[2]]$contrast
+
+allDEresults %>% 
+  bind_rows(.id = "mut") %>% 
+  arrange(adj.P.Val)
+```
+
+```{r}
+dge %>% 
+  cpm(log = TRUE) %>%
+  as.data.frame %>%
+  rownames_to_column("gene") %>%
+  dplyr::filter(gene %in% c("LGALS3", "BIRC7", "SIGLEC15")) %>%
+  melt() %>%
+  rename(sample = variable,
+         logCPM = value) %>% 
+  left_join(dge$samples, by = "sample") %>% 
+  ggplot(aes(x=gene, y = logCPM, fill = mut_TP53)) +
+  geom_boxplot()
+
+
+```
+
+```{r}
+## Phenotypes: 
+
+# Age, smoking, radiation therapy, etc.
+median_age <- median( dge$samples$age_at_initial_pathologic_diagnosis )
+
+# Add Age category for limma analysis
+dge$samples <- dge$samples %>% 
+  mutate(age_category = ifelse(age_at_initial_pathologic_diagnosis >= median_age, "older", "younger"),
+         radiation_therapy = ifelse(radiation_therapy == "[Discrepancy]", "Discrepancy", radiation_therapy))
+
+
+#dge$samples$tobacco_smoking_history
+
+# tobacco_smoking_history
+
+
+test_phenotypes <- c("age_category", "radiation_therapy", "history_of_diabetes")
+
+for (i in 1:length(test_phenotypes)){
+  pheno_x <- test_phenotypes[i]
+  
+  print(i)
+  print (pheno_x)
+  
+  design_mat <- model.matrix(as.formula(paste0("~0 + ", test_phenotypes[i])), data = dge$samples)
+    
+  two_categories <- dge$samples %>% 
+    select(test_phenotypes[i]) %>% 
+    unique() %>% 
+    unlist(use.names = F)
+  
+  
+  if (length(two_categories) > 2) { # Remove NA and dicrepancy from list of categories. 
+    two_categories <- two_categories[!is.na(two_categories)]
+    two_categories <- two_categories[two_categories != "[Discrepancy]"]
+  }
+  
+  contrast_formula <-  paste0(test_phenotypes[i], two_categories[2], "-" , test_phenotypes[i], two_categories[1])
+  
+  # Contrast matrix
+  contrasts_mat <- makeContrasts(
+    levels = colnames(design_mat),
+    contrast = contrast_formula # parse(contrast_formula)
+  )
+  colnames(contrasts_mat) <- test_phenotypes[i]
+   
+  # VOOM TRANSFORMATION: 
+  # Filter dge object to only contain samples from design matrix (NAs removed);
+  # Get the sample names from the design matrix and dge object
+  # Filter the dge object to keep only the common samples
+  dge_filtered <- dge[, rownames(design_mat)]
+  
+  voomData <- voom(dge_filtered, design = design_mat, plot = FALSE)
+  
+  fit <- lmFit(voomData, design_mat) %>%
+    contrasts.fit(contrasts_mat) %>%
+    treat() #lfc = 1 (default = 0.2630344)
+  
+  allDEresults[[pheno_x]] <- topTreat(fit,
+                                                 coef = test_phenotypes[i], #"age_category", 
+                                                 number = Inf, 
+                                                 adjust.method = "fdr") %>%
+    as.data.frame() %>% 
+  # Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05.     and absolute log2 fold change is greater than 1. 
+    dplyr::mutate(isSignificant = case_when(
+      adj.P.Val < 0.05 ~ TRUE, # & abs(logFC) > 1
+      TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
+    )) %>% 
+    rownames_to_column("sample") %>% 
+    filter(!str_detect(sample, "ENSG")) # Keep only our target genes
+}
+
 ```
 
 #### Specify Design Matrix
@@ -452,13 +643,15 @@ allDEresults <- allDEresults %>%
   dplyr::mutate(isSignificant = case_when(
     adj.P.Val < 0.05 & abs(logFC) > 1 ~ TRUE, 
     TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
-  ))
+  )) %>% 
+  rownames_to_column("sample") %>% 
+  filter(!str_detect(sample, "ENSG")) # Keep only our target genes
 
 sigDEresults <- allDEresults %>%
   dplyr::filter(isSignificant == TRUE)
 
 
-allDEresults
+allDEresults 
 sigDEresults
 ```
 
@@ -492,6 +685,40 @@ expressionOf_genes %>%
 # OLD
 
 ### Gene expression data
+
+```{r}
+### OLD WAY OF LOADING IN DATA: Only containing genes of interest !
+
+# Read expected counts
+if (!exists("df_expected_count")){
+  df_expected_count <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_goi.tsv"), 
+                                show_col_types = FALSE) %>% 
+    mutate(across(-c(sample), function(x) 2^x)) # Reverse log2
+}
+
+# Filter samples out which are not in phenotype data
+df_expected_count <- df_expected_count %>% 
+  dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count)))
+
+# Change gene IDs to gene names: 
+geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
+geneName_ensg <- geneName_ensg %>% 
+  rename(gene_ensg_shrt = converted_alias) %>% 
+  dplyr::select(name, gene_ensg_shrt)
+
+df_expected_count <- df_expected_count %>% 
+  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
+  select(-sample) %>% 
+  relocate(gene_ensg_shrt) %>% 
+  left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
+  rename(sample = name) %>% 
+  relocate(sample) %>% 
+  select(-gene_ensg_shrt)
+
+mat_exp_count <-  df_expected_count %>% 
+  column_to_rownames("sample") %>% 
+  as.matrix()
+```
 
 ```{r}
 # Gene expression TPM data: 
