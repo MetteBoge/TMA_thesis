@@ -7,6 +7,7 @@ editor: visual
 ```{r}
 # Control operations: 
 load_tpm <- FALSE
+plot_mds <- FALSE
 
 # Until I decide to loop, define cancer type here: 
 c_type <- "PAAD"
@@ -34,6 +35,128 @@ file_name_pheno2 <- "TCGA_PANCAN_curated_clinical_data"
 
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
+
+# Phenotype highlighted by Morten: 
+interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenetics_risk_category",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "gender",
+                                         "leukemia_french_american_british_morphology_code",
+                                         "molecular_analysis_abnormality_testing_result"),
+                              "CHOL" = c("age_at_initial_pathologic_diagnosis",
+                                         "ca_19_9_level",
+                                         "child_pugh_classification_grade",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "radiation_therapy"),
+                              "BRCA" = c("ER_Status_nature2012",
+                                         "Gender_nature2012",
+                                         "HER2_Final_Status_nature2012",
+                                         "additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "breast_carcinoma_estrogen_receptor_status",
+                                         "er_level_cell_percentage_category",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "margin_status",
+                                         "menopause_status",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy"),
+                              "CESC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "adjuvant_rad_therapy_prior_admin",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "brachytherapy_administered_status",
+                                         "clinical_stage",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "human_papillomavirus_type",
+                                         "neoplasm_histologic_grade",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history"),
+                              "HNSC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "clinical_stage",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "targeted_molecular_therapy"),
+                              "DLBC" = c("age_at_initial_pathologic_diagnosis",
+                                         "bone_marrow_involvement",
+                                         "clinical_stage",
+                                         "eastern_cancer_oncology_group",
+                                         "extranodal_involvement",
+                                         "gender",
+                                         "histological_type",
+                                         "hiv_status",
+                                         "ldh_level",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy"),
+                              "LUAD" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "eastern_cancer_oncology_group",
+                                         "egfr_mutation_result",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "karnofsky_performance_score",
+                                         "number_pack_years_smoked",
+                                         "pathologic_stage",
+                                         "primary_therapy_outcome_success",
+                                         "radiation_therapy",
+                                         "residual_tumor",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history"),
+                              "LUSC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "karnofsky_performance_score",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "tobacco_smoking_history"),
+                              "SKCM" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "breslow_depth_value",
+                                         "gender",
+                                         "history_of_neoadjuvant_treatment",
+                                         "lactate_dehydrogenase_result",
+                                         "melanoma_clark_level_value",
+                                         "melanoma_ulceration_indicator",
+                                         "pathologic_stage",
+                                         "radiation_therapy"),
+                              "PAAD" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "alcoholic_exposure_category",
+                                         "frequency_of_alcohol_consumption",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_chronic_pancreatitis",
+                                         "history_of_diabetes",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history")
+)
 ```
 
 ```{r}
@@ -213,7 +336,7 @@ if (!exists("df_expected_count")){
   
   df_expected_count[[c_type]] <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_", c_type, ".tsv"), 
                                 show_col_types = FALSE) %>% 
-    mutate(across(-c(sample), function(x) 2^x)) # Reverse log2
+    mutate(across(-c(sample), function(x) 2^x-1)) # Reverse log2
   
   # Filter samples out which are not in phenotype data
   df_expected_count[[c_type]] <- df_expected_count[[c_type]] %>% 
@@ -222,18 +345,18 @@ if (!exists("df_expected_count")){
   # Change gene IDs to gene names: 
   geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
   geneName_ensg <- geneName_ensg %>% 
-    rename(gene_ensg_shrt = converted_alias) %>% 
+    dplyr::rename(gene_ensg_shrt = converted_alias) %>% 
     dplyr::select(name, gene_ensg_shrt)
   
   df_expected_count[[c_type]] <- df_expected_count[[c_type]] %>% 
     mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-    select(-sample) %>% 
+    dplyr::select(-sample) %>% 
     relocate(gene_ensg_shrt) %>% 
     left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
-    rename(sample = name) %>% 
+    dplyr::rename(sample = name) %>% 
     relocate(sample) %>% 
     mutate(sample = ifelse(is.na(sample), gene_ensg_shrt, sample)) %>% 
-    select(-gene_ensg_shrt)
+    dplyr::select(-gene_ensg_shrt)
   
   #}
 }
@@ -241,7 +364,44 @@ if (!exists("df_expected_count")){
 
 ```
 
+## Collect phenotype data: 
+
+```{r}
+
+# Common colnames in two phenotype dataframes: 
+com_cols <- intersect(colnames(df_pheno), colnames(phenotype_ctype[[c_type]]))
+rm_cols <- com_cols[com_cols != "sample"]
+
+# Filter out samples that are not in expected count data:
+# Add the extra ctype specific phenotype data: 
+# Add mutation data for top 10 most mutated genes: 
+df_pheno_2 <- df_pheno %>% 
+  filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
+  dplyr::select(-rm_cols) %>% 
+  left_join(phenotype_ctype[[c_type]], by = "sample") %>% 
+  left_join(mut_ctype[[c_type]], by = "sample")
+  
+# Change blank cells to NA
+df_pheno_2[df_pheno_2 == ""] <- NA
+
+# Remove columns only consisting of NAs: 
+df_pheno_2 <- df_pheno_2 %>% 
+  select_if(function(x) { sum (!is.na(x)) >0})
+
+rownames(df_pheno_2) <- df_pheno_2$sample
+
+
+# Select only phenotypes of interst and top10 mutations:
+df_pheno_of_interst <- df_pheno_2 %>% 
+  dplyr::select(interesting_phenotype[[c_type]], starts_with("mut"))
+```
+
 ## Limma workflow
+
+```{r}
+
+
+```
 
 (<https://www.bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html>)
 
@@ -273,37 +433,20 @@ mat_exp_count_ctype <- df_expected_count[[c_type]] %>%
   column_to_rownames("sample") %>% 
   as.matrix()
 
-# Common colnames in two phenotype dataframes: 
-com_cols <- intersect(colnames(df_pheno), colnames(phenotype_ctype[[c_type]]))
-rm_cols <- com_cols[com_cols != "sample"]
-
-# Filter out samples that are not in expected count data:
-# Add the extra ctype specific phenotype data: 
-# Add mutation data for top 10 most mutated genes: 
-df_pheno_2 <- df_pheno %>% 
-  filter(sample %in% colnames(mat_exp_count_ctype)) %>% 
-  select(-rm_cols) %>% 
-  left_join(phenotype_ctype[[c_type]], by = "sample") %>% 
-  left_join(mut_ctype[[c_type]], by = "sample")
-  
-# Change blank cells to NA
-df_pheno_2[df_pheno_2 == ""] <- NA
-
-# Remove columns only consisting of NAs: 
-df_pheno_2 <- df_pheno_2 %>% 
-  select_if(function(x) { sum (!is.na(x)) >0})
-
-rownames(df_pheno_2) <- df_pheno_2$sample
-
 # Create dge object: 
+# Make sure phenotypes are factors:  
 dge <- DGEList(counts = mat_exp_count_ctype, 
-               samples = df_pheno_2) %>% 
+               samples = mutate_all(df_pheno_of_interst, as.factor)) %>% 
   calcNormFactors("TMM") # Normalizing gene expression distributions. See factors like: dge$samples$norm.factors
 #}
 
 ```
 
-### **Principal component analysis (PCA)**
+### Unsupervised clustering of samples
+
+<https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html> (5.4)
+
+Same as PCA ? (multidimensional scaling (MDS) plot)
 
 ```{r}
 #dge$samples$X_GENOMIC_ID_TCGA_PAAD_mutation_broad_gene
@@ -316,22 +459,46 @@ dge <- DGEList(counts = mat_exp_count_ctype,
 pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
 #summary(pca_analysis) 
 
+# Categoriacal values
 ggbiplot::ggbiplot(pca_analysis, 
                    groups = dge$samples$mut_TP53, 
                    ellipse = TRUE,
                    var.axes = FALSE)
 
+# Numerical values
 ggbiplot::ggbiplot(pca_analysis, 
                    groups = dge$samples$maximum_tumor_dimension, 
                    ellipse = FALSE,
                    var.axes = FALSE)
 
-# age_at_initial_pathologic_diagnosis,anatomic_neoplasm_subdivision, gender, radiation_therapy, pathologic_stage, number_of_lymphnodes_positive_by_he, maximum_tumor_dimension, neoplasm_histologic_grade
 
-#anatomic_neoplasm_subdivision
-#pathologic_stage
 
 #cpm(dge, log=TRUE) %>% as.data.frame()
+
+#interesting_phenotype[[c_type]]
+
+
+
+if(plot_mds){
+  library(RColorBrewer)
+  
+  par(mfrow=c(1,2))
+  group1 <- dge$samples$history_of_chronic_pancreatitis
+  col.group1 <- group1
+  levels(col.group1) <-  brewer.pal(nlevels(col.group1), "Set1")
+  col.group1 <- as.character(col.group1)
+  
+  group2 <- dge$samples$radiation_therapy
+  col.group2 <- group2
+  levels(col.group2) <-  brewer.pal(nlevels(col.group2), "Set2")
+  col.group2 <- as.character(col.group2)
+  
+  plotMDS(lcpm, labels=group1, col=col.group1)
+  title(main="A. chronic pancreatitis")
+  plotMDS(lcpm, labels=group2, col=col.group2, dim=c(3,4))
+  title(main="B. radiation therapy")
+}
+
 ```
 
 ### Differential expression analysis
@@ -381,14 +548,44 @@ afterFiltering_plot <- dge %>%
   ggtitle("B. After filtering", subtitle = paste0(table(keepTheseGenes)[[2]], " genes"))+
   labs(x = "logCPM", y = "Density")
 
-beforeFiltering_plot
-afterFiltering_plot
+#beforeFiltering_plot
+#afterFiltering_plot
 ```
 
 ```{r}
 # Update the dge object: 
 
 dge <- dge[keepTheseGenes,,keep.lib.sizes = FALSE] 
+
+```
+
+```{r}
+# Function that returns the variable name as string:
+get_variable_name <-  function(v1) {
+  deparse(substitute(v1))
+}
+
+pheno_of_int <- get_variable_name(history_of_chronic_pancreatitis)
+
+design_mat <- model.matrix(as.formula(paste0("~0 + ", pheno_of_int)), 
+                           data = dge$samples)
+
+dge$sample
+
+# Contrast matrix
+contrasts_mat <- makeContrasts(
+  levels = colnames(design_mat),
+  contrast = paste0(mut, "MUT - ", mut, "WT") # parse(contrast_formula)
+)
+colnames(contrasts_mat) <- mut
+ 
+# VOOM TRANSFORMATION: 
+# Filter dge object to only contain samples from design matrix (NAs removed);
+# Get the sample names from the design matrix and dge object
+# Filter the dge object to keep only the common samples
+dge_filtered <- dge[, rownames(design_mat)]
+
+voomData <- voom(dge_filtered, design = design_mat, plot = FALSE)
 
 ```
 
@@ -486,9 +683,9 @@ dge$samples <- dge$samples %>%
 #dge$samples$tobacco_smoking_history
 
 # tobacco_smoking_history
+# history_of_diabetes
 
-
-test_phenotypes <- c("age_category", "radiation_therapy", "history_of_diabetes")
+test_phenotypes <- c("age_category", "radiation_therapy")
 
 for (i in 1:length(test_phenotypes)){
   pheno_x <- test_phenotypes[i]
@@ -499,7 +696,7 @@ for (i in 1:length(test_phenotypes)){
   design_mat <- model.matrix(as.formula(paste0("~0 + ", test_phenotypes[i])), data = dge$samples)
     
   two_categories <- dge$samples %>% 
-    select(test_phenotypes[i]) %>% 
+    dplyr::select(test_phenotypes[i]) %>% 
     unique() %>% 
     unlist(use.names = F)
   
@@ -543,6 +740,12 @@ for (i in 1:length(test_phenotypes)){
     rownames_to_column("sample") %>% 
     filter(!str_detect(sample, "ENSG")) # Keep only our target genes
 }
+
+
+
+allDEresults
+
+print("HE")
 
 ```
 
