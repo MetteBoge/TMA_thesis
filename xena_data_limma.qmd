@@ -5,12 +5,14 @@ editor: visual
 ---
 
 ```{r}
+rm(list = ls())
+
 # Control operations: 
 load_tpm <- FALSE
 plot_mds <- FALSE
 
 # Until I decide to loop, define cancer type here: 
-c_type <- "PAAD"
+c_type <- "SKCM"
 ```
 
 ## Load libraries and data
@@ -400,6 +402,20 @@ df_pheno_of_interst <- df_pheno_2 %>%
 df_pheno_of_interst <- df_pheno_of_interst %>% 
   mutate_all(~replace(., . == "[Discrepancy]", NA))
 
+
+# Change errors entries with pipe: 
+df_pheno_of_interst <- df_pheno_of_interst %>% 
+  mutate(across(
+    where(is.character), # Only apply to columns with character data
+    ~ {
+      split_vals <- str_split(.x, "\\|")  # Split the string by '|'
+      # Check if all elements in the list are the same
+      map_chr(split_vals, ~ if_else(length(unique(.x)) == 1, unique(.x)[1], NA_character_))
+    }
+  ))
+
+# Remove columns with only NAs: 
+df_pheno_of_interst <- df_pheno_of_interst[,colSums(is.na(df_pheno_of_interst))<nrow(df_pheno_of_interst)]
 ```
 
 ```{r}
@@ -539,20 +555,6 @@ Same as PCA ? (multidimensional scaling (MDS) plot)
 # Plotting PCA
 
 
-pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
-#summary(pca_analysis) 
-
-# Categoriacal values
-ggbiplot::ggbiplot(pca_analysis, 
-                   groups = dge$samples$mut_TP53, 
-                   ellipse = TRUE,
-                   var.axes = FALSE)
-
-# Numerical values
-ggbiplot::ggbiplot(pca_analysis, 
-                   groups = dge$samples$maximum_tumor_dimension, 
-                   ellipse = FALSE,
-                   var.axes = FALSE)
 
 
 
@@ -564,6 +566,24 @@ ggbiplot::ggbiplot(pca_analysis,
 
 if(plot_mds){
   library(RColorBrewer)
+    
+    
+  pca_analysis <- prcomp(t(cpm(dge, log=TRUE)))
+  #summary(pca_analysis) 
+  
+  # Categoriacal values
+  ggbiplot::ggbiplot(pca_analysis, 
+                     groups = dge$samples$targeted_molecular_therapy, 
+                     ellipse = TRUE,
+                     var.axes = FALSE)
+  
+  # Numerical values
+  ggbiplot::ggbiplot(pca_analysis, 
+                     groups = dge$samples$maximum_tumor_dimension, 
+                     ellipse = FALSE,
+                     var.axes = FALSE)
+  
+  
   
   par(mfrow=c(1,2))
   group1 <- dge$samples$history_of_chronic_pancreatitis
@@ -656,9 +676,14 @@ make_all_contrasts <- function (group, delim="_vs_"){
   group <- sort(unique(as.character(group))) %>% 
     make.names()
   
-  #/ make all combinations
-  cb   <- combn(group, 2, FUN = function(x){paste0(x[1], "-", x[2])})
-
+  # Make sure MUT and WT are in right order for comparison. 
+  if ("MUT" %in% group & "WT" %in% group){
+    cb <- "WT-MUT"
+  } else {
+    #/ make all combinations
+    cb   <- combn(group, 2, FUN = function(x){paste0(x[1], "-", x[2])})
+  }
+  
   #/ make contrasts
   contrasts<- limma::makeContrasts(contrasts=cb, levels=group)
   colnames(contrasts) <- gsub("-", delim, colnames(contrasts))
@@ -666,25 +691,34 @@ make_all_contrasts <- function (group, delim="_vs_"){
   return(contrasts)
 }
 
+
+
+
 ```
 
 ```{r}
 # Loop through all the interesting phenotypes to find significantly differentially expressed target genes in the different conditions: 
 
 # Table with results of what of our targets genes are sig up or down expr in different phenotypes. 
-table_results <- tibble(phenotype = character(),
-                        analysis = character(),
-                        genes_sig_up = character(), 
-                        genes_sig_down = character())
+#table_results <- tibble(phenotype = character(),
+#                        analysis = character(),
+#                        genes_sig_up = character(), 
+#                        genes_sig_down = character())
 
-# Empty list to save efit element for all the phenotypes with significant target genes:
-list_efit_sig <- list()
+# Empty list to save table with logFC and p values all the phenotypes:
+list_df_logFC_pval <- list()
+
+# Empty list to save efit: 
+#list_efit <- list()
 
 phenos_to_test <- df_pheno_of_interst %>% colnames()
 
 for (x_pheno in phenos_to_test){
   print(x_pheno)
   rm(design_mat, contrasts_mat)
+  
+  # Empty list to save topTreat for each comparison: 
+  list_comparisons <- list()
    
   ### MAKE DESIGN AND CONTRAST MATRIX ##
   options(na.action='na.omit') # DO not include if only NAs
@@ -718,8 +752,9 @@ for (x_pheno in phenos_to_test){
   
   vfit <- contrasts.fit(vfit, contrast=contrasts_mat)
   
-  # use trend=TRUE because I have RNA-seq data with mean-variance trend (ChatGPT)
-  efit <- eBayes(vfit, trend = TRUE)
+  # Do not use trend=TRUE when I use voom. https://support.bioconductor.org/p/98201
+  # ChatGPT suggest using voom for RNAseq data. 
+  efit <- eBayes(vfit, trend = FALSE)
   
     
   ## FIND SIGNIFICANTLY EXPRESSED GENES ##
@@ -736,50 +771,76 @@ for (x_pheno in phenos_to_test){
     slice(de_common) %>%
     filter(!str_detect(gene, "^ENSG")) # Any of our target genes here?
   
-   
-  # If no significant genes, add None for the pheno: 
-  if (nrow(results) < 1){
-    table_results <- table_results %>% 
-    add_row(phenotype = x_pheno,
-            analysis = x_pheno, 
-            genes_sig_up = "None", 
-            genes_sig_down = "None")
+  # Loop all comparisons to get topTreat table for all for later plotting
+  if (length(colnames(contrasts_mat)>1)){
+    for (c in colnames(contrasts_mat)){
+      list_comparisons[[c]] <- topTreat(efit, 
+                adjust.method = "fdr",
+                number = Inf,
+               coef = c) %>% 
+          rownames_to_column("gene") %>% 
+          filter(!str_detect(gene, "^ENSG")) %>% 
+          mutate(phenotype = x_pheno,
+                 comparison = c)
+    }
+    list_df_logFC_pval[[x_pheno]] <- list_comparisons %>% 
+      bind_rows()
+    
   } else {
-    
-    for (i in 2:ncol(results)){
       
-    up_genes <- results[which(results[,i] > 0), 1]
-    if(length(up_genes)<1){
-      up_genes <- "None"
-    }
-    
-    down_genes <- results[which(results[,i] < 0), 1]
-    if(length(down_genes)<1){
-      down_genes <- "None"
-    }
-    
-    table_results <- table_results %>% 
-      add_row(phenotype = x_pheno,
-              analysis = colnames(results)[i], 
-              genes_sig_up = paste(up_genes, collapse = ", "), 
-              genes_sig_down = paste(down_genes, collapse = ", "))
-    }
-    
-    # Save efit for the phenotype with significant target genes: 
-    list_efit_sig[[x_pheno]] <- efit
+    # Save table with logFC and p values: 
+    list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
+            adjust.method = "fdr",
+            number = Inf) %>% 
+      rownames_to_column("gene") %>% 
+      filter(!str_detect(gene, "^ENSG")) %>% 
+      mutate(phenotype = x_pheno, 
+            comparison = colnames(contrasts_mat))
   }
   
+  
+  # Save efit to list: 
+  #list_efit[[x_pheno]] <- efit
+   
+  # If no significant genes, add None for the pheno: 
+  #if (nrow(results) < 1){
+  #  table_results <- table_results %>% 
+  #  add_row(phenotype = x_pheno,
+  #          analysis = x_pheno, 
+  #          genes_sig_up = "None", 
+  #          genes_sig_down = "None")
+  #} else {
+  #  
+  #  for (i in 2:ncol(results)){
+  #    
+  #  up_genes <- results[which(results[,i] > 0), 1]
+  #  if(length(up_genes)<1){
+  #    up_genes <- "None"
+  #  }
+    
+  #  down_genes <- results[which(results[,i] < 0), 1]
+  #  if(length(down_genes)<1){
+  #    down_genes <- "None"
+  #  }
+    
+  #  table_results <- table_results %>% 
+  #    add_row(phenotype = x_pheno,
+  #            analysis = colnames(results)[i], 
+  #            genes_sig_up = paste(up_genes, collapse = ", "), 
+  #            genes_sig_down = paste(down_genes, collapse = ", "))
+  #  }
+    
+  #}
+  
 }
-```
 
-```{r}
-table_results
+dge$samples[[x_pheno]] 
 ```
 
 #### Results of univariate analysis
 
 ```{r}
-# Make table with number of individuals in each category
+# Make table with number of individuals in e ach category
 df_number_of_individuals_phenotype_long <- df_pheno_of_interst %>%
   mutate(across(everything(), as.character)) %>% 
   pivot_longer(cols = everything(), names_to = "Phenotype", values_to = "Category") %>%
@@ -808,6 +869,7 @@ get_sample_dist <- function(pheno, analysis, check_low = FALSE) {
   
   # Get counts for each category from count_data
   counts <- df_number_of_individuals_phenotype_long %>%
+    mutate(Category = ifelse(!is.na(Category), make.names(Category), Category)) %>% 
     filter(Phenotype == pheno) %>% 
     filter(Category %in% categories) %>%
     summarise(sample_dist = paste0(Category, ":", Count, collapse = ", ")) 
@@ -832,6 +894,112 @@ get_sample_dist <- function(pheno, analysis, check_low = FALSE) {
 ```
 
 ```{r}
+# Add Low value to ALL comparisons:
+full_table_w_low <- list_df_logFC_pval %>% 
+  bind_rows() %>% 
+  mutate(sample_dist = mapply(get_sample_dist, phenotype, comparison, check_low = T))
+
+# Table with conditions with at least one gene is significant after mutliple adjusting (adjusted P value)
+table_w_adjP_sig <- full_table_w_low %>% 
+  unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>% 
+  group_by(condition) %>% 
+  filter(any(adj.P.Val < 0.05)) %>% 
+  ungroup()
+
+# Table with conditions with at least one gene is significant in regular P value, but NOT by multiple adjusting (adjusted P value)
+table_w_only_regP_sig <- full_table_w_low %>% 
+  unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>%
+  filter(!condition %in% table_w_adjP_sig$condition) %>% 
+  group_by(condition) %>% 
+  filter(any(P.Value < 0.05)) %>% 
+  ungroup()
+
+
+```
+
+##### Heatmap
+
+```{r}
+# Check if the number of unique conditions matches the length of col_list
+unique_conditions <- unique(table_w_adjP_sig$condition)
+
+# Create a color vector that matches the length of unique conditions
+col_list <- ifelse(unique_conditions %in% table_w_adjP_sig$condition[table_w_adjP_sig$sample_dist == "LOW"], "red", "black")
+
+# Plot with correct y-axis coloring
+table_w_adjP_sig %>% 
+  mutate(condition = ifelse(phenotype == "histological_type", 
+                            gsub("Pancreas_", "", condition),
+                            condition)) %>% 
+  #mutate(significance = case_when(
+  #  P.Value < 0.001 ~ "ooo",
+  #  P.Value < 0.01  ~ "oo",
+  #  P.Value > 0.05  ~ "o",
+  #  TRUE              ~ "")) %>% 
+  mutate(significance = case_when(
+    adj.P.Val < 0.001 ~ "***",
+    adj.P.Val < 0.01  ~ "**",
+    adj.P.Val < 0.05  ~ "*",
+    TRUE              ~ "")) %>% 
+  ggplot(aes(x = gene, y = condition, fill = logFC)) +
+  geom_tile() + 
+  geom_text(aes(label = significance), color = "black", size = 5) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(size = 14, 
+                                   angle = 30),
+    axis.text.y = element_text(colour = col_list,
+                               size = 14)
+  )
+
+
+
+
+# Check if the number of unique conditions matches the length of col_list
+unique_conditions <- unique(table_w_only_regP_sig$condition)
+
+# Create a color vector that matches the length of unique conditions
+col_list <- ifelse(unique_conditions %in% table_w_only_regP_sig$condition[table_w_only_regP_sig$sample_dist == "LOW"], "red", "black")
+
+# Plot with correct y-axis coloring
+table_w_only_regP_sig %>% 
+  mutate(significance = case_when(
+    P.Value < 0.001 ~ "***",
+    P.Value < 0.01  ~ "**",
+    P.Value > 0.05  ~ "*",
+    TRUE              ~ "")) %>% 
+  ggplot(aes(x = gene, y = condition, fill = logFC)) +
+  geom_tile() + 
+  geom_text(aes(label = significance), color = "black", size = 5) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(colour = col_list)
+  )
+```
+
+##### TABLES
+
+```{r}
+df_number_of_individuals_phenotype_long %>% 
+  dplyr::filter(Phenotype %in% table_w_adjP_sig$phenotype,
+                !is.na(Category)) %>% 
+  kable() %>%
+  kable_styling(full_width = F, position = "center")
+
+df_number_of_individuals_phenotype_wide %>% 
+  dplyr::filter(Phenotype %in% table_w_adjP_sig$phenotype) %>% 
+  mutate(Sample_distribution_2 = ifelse(Phenotype == "histological_type",
+                                        gsub("Pancreas_", "",
+                                             Sample_distribution_2),
+                                        Sample_distribution_2)) %>% 
+  kable() %>%
+  kable_styling(full_width = F, position = "center")
+```
+
+## OLD
+
+```{r}
 # Make list (table) of phenotypes with No significant genes
 df_non_significant_phenotypes <- table_results %>% 
   filter(genes_sig_up=="None" & genes_sig_down=="None") %>% 
@@ -841,7 +1009,7 @@ df_non_significant_phenotypes <- table_results %>%
 
 # FILTER OUT ANALYSIS WITH <10 IN ONE OF THE CATEGORIES. 
 # Make table with the phenotypes with significant genes;
-# I am also filtering out the analysis which has at least one category < 10 samples. 
+# I am also filtering out the analysis which has at least one category < 10 samples
 sig_genes_results <- table_results %>% 
   filter(genes_sig_up!="None" | genes_sig_down!="None") 
 
@@ -849,6 +1017,13 @@ sig_genes_results_above_10 <- sig_genes_results %>%
   mutate(sample_dist = mapply(get_sample_dist, phenotype, analysis, check_low = T)) %>% 
   filter(sample_dist != "LOW")
 
+# Get list of low analysises: 
+LOW_sig_condition <- sig_genes_results %>% 
+  mutate(sample_dist = mapply(get_sample_dist, phenotype, analysis, check_low = T)) %>% 
+  filter(sample_dist == "LOW") %>% 
+  unite(condition, c(phenotype, analysis), sep = "_") %>% 
+  dplyr::select(condition) %>% 
+  unlist(use.names = F)
 
 # Phenotypes sorted out because of categories with <10 samples: 
 list_sig_phenotypes <- sig_genes_results["phenotype"] %>% 
@@ -858,7 +1033,7 @@ list_sig_above10_phenotypes <- sig_genes_results_above_10["phenotype"] %>%
 list_sig_phenotypes[!(list_sig_phenotypes %in% list_sig_above10_phenotypes)]
 ```
 
-##### TABLES: 
+##### TABLES:
 
 ```{r}
 sig_genes_results_above_10[1,"analysis"] <- "Pancreas_Adenocarcinoma_Ductal_Type_vs\nPancreas_Adenocarcinoma_Other_Subtype"
@@ -895,13 +1070,47 @@ list_efit_sig$histological_type$coefficients %>%
 
 topTreat(list_efit_sig$histological_type, 
         adjust.method = "fdr",
-        genelist = target_list)
+        number = Inf) %>% 
+  rownames_to_column("gene") %>% 
+  filter(!str_detect(gene, "^ENSG")) # Find our target genes 
   
+
+
+list_df_logFC_pval %>% 
+  bind_rows() %>%  
+  unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>% 
+  mutate(LOW_sig = ifelse(condition %in% LOW_sig_condition, TRUE, FALSE)) %>% 
+  group_by(condition) %>% 
+  filter(any(adj.P.Val < 0.05)) %>% 
+  mutate(significance = case_when(
+    P.Value < 0.001 ~ "ooo",
+    P.Value < 0.01  ~ "oo",
+    P.Value > 0.05  ~ "o",
+    TRUE              ~ "")) %>% 
+  mutate(significance = case_when(
+    adj.P.Val < 0.001 ~ "***",
+    adj.P.Val < 0.01  ~ "**",
+    adj.P.Val < 0.05  ~ "*",
+    TRUE              ~ significance)) %>% 
+  # If LOW sample (<10) in any of two groups, make parenthesis to show
+  mutate(significance = case_when(
+    adj.P.Val < 0.001 & LOW_sig  ~ "(***)",
+    adj.P.Val < 0.01 & LOW_sig  ~ "(**)",
+    adj.P.Val < 0.05 & LOW_sig  ~ "(*)",
+    TRUE              ~ significance)) %>% 
+  ggplot(aes(x = gene, y = condition, fill = logFC)) +
+  geom_tile() + 
+  geom_text(aes(label = significance), color = "black", size = 5) + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal()
+
+# Next: Make sure this one agrees with the table (Is the table based on regular pvalues or the adj p values?)
+####### Find a way to mark the significant by normal P value
+
+# Make plot with starring the adj p values significant genes (add information of low ) ALSO marking P val (regular) significant and if LOW. 
+# Make another plot with normal P value also mariking low, marking significance with stars. AND mark the adj P val sig (If any in between)
+
 ```
-
-Make plots with the results.
-
-## OLD
 
 ```{r}
 # Intercept: For Factors it doesnt matter. But for continous values such as age, you will get a better fit with intercept ! https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html 
