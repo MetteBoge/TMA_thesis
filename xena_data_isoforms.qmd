@@ -1,0 +1,1105 @@
+---
+title: "xena_data_isoforms"
+format: html
+editor: visual
+---
+
+```{r}
+# Until I decide to loop, define cancer type here: 
+c_type <- "PAAD"
+```
+
+## Load packages and targets
+
+```{r}
+library(tidyverse)
+library(R.utils)
+library(arrow)
+library(biomaRt)
+library(seqinr)
+library(RColorBrewer)
+library(viridis)
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+
+cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
+cancer_abbr_list_skcm <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM_tumor", "SKCM_metastatic", "LUAD", "LUSC")
+
+# Phenotype highlighted by Morten: 
+interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenetics_risk_category",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "gender",
+                                         "leukemia_french_american_british_morphology_code",
+                                         "molecular_analysis_abnormality_testing_result"),
+                              "CHOL" = c("age_at_initial_pathologic_diagnosis",
+                                         "ca_19_9_level",
+                                         "child_pugh_classification_grade",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "radiation_therapy"),
+                              "BRCA" = c("ER_Status_nature2012",
+                                         "Gender_nature2012",
+                                         "HER2_Final_Status_nature2012",
+                                         "additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "breast_carcinoma_estrogen_receptor_status",
+                                         "er_level_cell_percentage_category",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "margin_status",
+                                         "menopause_status",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy"),
+                              "CESC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "adjuvant_rad_therapy_prior_admin",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "brachytherapy_administered_status",
+                                         "clinical_stage",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "human_papillomavirus_type",
+                                         "neoplasm_histologic_grade",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history"),
+                              "HNSC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "clinical_stage",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "targeted_molecular_therapy"),
+                              "DLBC" = c("age_at_initial_pathologic_diagnosis",
+                                         "bone_marrow_involvement",
+                                         "clinical_stage",
+                                         "eastern_cancer_oncology_group",
+                                         "extranodal_involvement",
+                                         "gender",
+                                         "histological_type",
+                                         "hiv_status",
+                                         "ldh_level",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy"),
+                              "LUAD" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "eastern_cancer_oncology_group",
+                                         "egfr_mutation_result",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "karnofsky_performance_score",
+                                         "number_pack_years_smoked",
+                                         "pathologic_stage",
+                                         "primary_therapy_outcome_success",
+                                         "radiation_therapy",
+                                         "residual_tumor",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history"),
+                              "LUSC" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "eastern_cancer_oncology_group",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_neoadjuvant_treatment",
+                                         "karnofsky_performance_score",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "tobacco_smoking_history"),
+                              "SKCM" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "breslow_depth_value",
+                                         "gender",
+                                         "history_of_neoadjuvant_treatment",
+                                         "lactate_dehydrogenase_result",
+                                         "melanoma_clark_level_value",
+                                         "melanoma_ulceration_indicator",
+                                         "pathologic_stage",
+                                         "radiation_therapy"),
+                              "PAAD" = c("additional_pharmaceutical_therapy",
+                                         "additional_radiation_therapy",
+                                         "age_at_initial_pathologic_diagnosis",
+                                         "alcoholic_exposure_category",
+                                         "frequency_of_alcohol_consumption",
+                                         "gender",
+                                         "histological_type",
+                                         "history_of_chronic_pancreatitis",
+                                         "history_of_diabetes",
+                                         "history_of_neoadjuvant_treatment",
+                                         "neoplasm_histologic_grade",
+                                         "pathologic_stage",
+                                         "radiation_therapy",
+                                         "targeted_molecular_therapy",
+                                         "tobacco_smoking_history")
+)
+```
+
+## Download data
+
+```{r}
+# Cohort:
+cohort = "TCGA_PANCAN"
+file_path_xenadata <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+file_path_data <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/"
+file_path_git <-  "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/code_space/TMA_thesis/data/"
+#dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+```
+
+```{r}
+## Data
+data_type = "transcript_expression_RNAseq_RSEM_tpm"
+
+# Specify the URL of the file you want to download
+url <- "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/tcga_rsem_isoform_tpm.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_data <- paste0(cohort, "_", data_type)
+
+options(timeout=1000)
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  # Call the download.file() function, passing in the URL and file name/location as arguments
+  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+}
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+## sampleType_primaryDisease
+data_type = "sampleType_primaryDisease"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/TCGA_phenotype_denseDataOnlyDownload.tsv.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno1 <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path_xenadata, file_name_pheno1, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path_xenadata, file_name_pheno1, ".tsv", sep = "")))){
+  download.file(url, paste(file_path_xenadata, file_name_pheno1, ".tsv", sep = ""), mode = "wb")
+}
+if (!(file.exists(paste(file_path_xenadata, file_name_pheno1, ".tsv", sep = "")))){
+  gunzip(paste(file_path_xenadata, file_name_pheno1, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+## curated_clinical_data
+data_type = "curated_clinical_data"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/Survival_SupplementalTable_S1_20171025_xena_sp"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno2 <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path_xenadata, file_name_pheno2, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path_xenadata, file_name_pheno2, ".tsv", sep = "")))){
+  download.file(url, paste(file_path_xenadata, file_name_pheno2, ".tsv", sep = ""), mode = "wb")
+}
+if (!(file.exists(paste(file_path_xenadata, file_name_pheno2, ".tsv", sep = "")))){
+  gunzip(paste(file_path_xenadata, file_name_pheno2, ".tsv.gz", sep = ""))
+}
+```
+
+### Read phenotype data
+
+```{r}
+df_st_pd <- read.csv(paste(file_path_xenadata, file_name_pheno1, ".tsv", sep = ""),sep = "\t") 
+df_clin_pd <- read.csv(paste(file_path_xenadata, file_name_pheno2, ".tsv", sep = ""),sep = "\t")  
+
+df_pheno <- df_clin_pd %>%    
+  full_join(df_st_pd, by = "sample")  
+```
+
+```{r}
+# Load in more phenotype data
+
+#for (c_type in cancer_abbr_list) {
+download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
+                        c_type, 
+                        ".sampleMap%2F",
+                        c_type, 
+                        "_clinicalMatrix")
+
+file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
+
+
+if (!(file.exists(file_name_pheno))){
+ download.file(download_link, file_name_pheno, mode = "wb")
+} 
+
+# Load data tables to list: 
+if (!exists("phenotype_ctype")){
+  phenotype_ctype <- list()
+  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+    rename(sample = sampleID)
+} else if (!c_type %in% names(phenotype_ctype)){
+  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+    rename(sample = sampleID)
+}
+#}
+```
+
+```{r}
+
+sample_id_df <- list()
+full_pheno <- list()
+
+#for (c_type in cancer_abbr_list){
+df_pheno_c_type <- df_pheno %>% 
+  filter(cancer.type.abbreviation == c_type)
+
+# Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
+# For Melanoma, both metastatic and tumor. 
+if (c_type == "LAML"){
+ sample_id_df[[c_type]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
+   dplyr::select(sample)
+ 
+} else if(c_type == "SKCM"){
+ sample_id_df[["SKCM_tumor"]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Tumor") %>%
+   dplyr::select(sample)
+ 
+ sample_id_df[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Metastatic") %>%
+   dplyr::select(sample)
+ 
+} else {
+ sample_id_df[[c_type]] <- df_pheno_c_type %>% 
+   filter(sample_type == "Primary Tumor") %>%
+   dplyr::select(sample) 
+}
+
+#}
+
+
+
+```
+
+```{r}
+# Write file with all sample IDS: 
+#sample_id_df %>% 
+#  bind_rows() %>% 
+#  write.csv(paste0(file_path_xenadata, "all_sample_ids_of_interest.txt"), 
+#            row.names = FALSE, quote = FALSE)
+```
+
+```{r}
+
+# List of patients with more than one sample. Options to compare gene expression in same individual but from different tissue (e.g. tumor vs normal tissue same patient) 
+#pat_morethan1sample <- df_pheno %>%    
+#  group_by(X_PATIENT) %>%    
+#  summarise(n=n()) %>%   
+#  filter(n>1 & n < 200) %>%    
+#  dplyr::select(X_PATIENT) %>%    
+#  unlist(use.names = F)  
+#df_pheno %>%  
+#  filter(X_PATIENT %in% pat_morethan1sample)
+```
+
+### Read transcript data
+
+```{r}
+# Read for each cancer type (data made in python jupyter notebook)
+
+transcript_tpm <- list()
+
+
+
+#for (c_type in cancer_abbr_list){
+df_tmp <- read.csv(paste0(file_path_git, 
+                          "transcript_expression/TCGA_pancan_tpm_transcripts_", c_type, ".tsv"), sep="\t") %>%
+  rename(transcript_id = sample, 
+         transcript_name = Name)
+
+colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
+
+if (c_type == "SKCM"){
+  sample_ids_tmp_skcm_meta <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
+  sample_ids_tmp_skcm_tumor <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
+  
+  transcript_tpm[["SKCM_metastatic"]] <- df_tmp %>% 
+    dplyr::select(transcript_id, transcript_name, sample_ids_tmp_skcm_meta)
+  
+  transcript_tpm[["SKCM_tumor"]] <- df_tmp %>% 
+    dplyr::select(transcript_id, transcript_name, sample_ids_tmp_skcm_tumor)
+  
+} else {
+  sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
+  
+  transcript_tpm[[c_type]] <- df_tmp %>% 
+    dplyr::select(transcript_id, transcript_name, sample_ids_tmp)
+}
+  
+#}
+
+
+
+transcript_count <- list()
+
+#for (c_type in cancer_abbr_list){
+df_tmp <- read.csv(paste0(file_path_git, 
+                          "transcript_expression/TCGA_pancan_expected_count_transcripts_", c_type, ".tsv"), 
+                   sep="\t") %>%
+  rename(transcript_id = sample, 
+         transcript_name = Name)
+
+colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
+
+if (c_type == "SKCM"){
+  sample_ids_tmp_skcm_meta <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
+  sample_ids_tmp_skcm_tumor <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
+  
+  transcript_count[["SKCM_metastatic"]] <- df_tmp %>% 
+    dplyr::select(transcript_name, transcript_id, sample_ids_tmp_skcm_meta)
+  
+  transcript_count[["SKCM_tumor"]] <- df_tmp %>% 
+    dplyr::select(transcript_name, transcript_id, sample_ids_tmp_skcm_tumor)
+  
+} else {
+  sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
+  
+  transcript_count[[c_type]] <- df_tmp %>% 
+    dplyr::select(transcript_name, transcript_id, sample_ids_tmp)
+}
+  
+#}
+```
+
+### Read mutations
+
+```{r}
+
+top10_mutations <- list()
+
+# Load in the mutation data: 
+
+#for (c_type in cancer_abbr_list) {
+download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/mc3_gene_level%2F", 
+                        c_type, 
+                        "_mc3_gene_level.txt.gz")
+if (c_type == "LAML"){
+  download_link <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2Fmutation_wustl_gene.gz"
+}
+
+file_name_mut <- paste0(file_path_xenadata, "TCGA_", c_type, "_non-silent_mutation")
+
+
+if (!(file.exists(paste0(file_name_mut, ".tsv.gz")) | 
+      file.exists(paste0(file_name_mut, ".tsv")))){
+  download.file(download_link, paste0(file_name_mut, ".tsv.gz"), mode = "wb")
+} 
+if (!(file.exists(paste0(file_name_mut, ".tsv")))){
+  gunzip(paste0(file_name_mut, ".tsv.gz"))
+}
+
+
+# Load data tables to list: 
+if (!exists("mut_ctype")){
+  mut_ctype <- list()
+  mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                  sep = "\t")
+  
+  colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+  
+  # Filter to only contain mutations occuring in >= 5% of all samples: 
+  #num_cols <- ncol(mut_ctype[[c_type]]) - 1
+  
+  # Keep only top 10 most mutated genes: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    mutate(count_ones = rowSums(dplyr::select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+    arrange(desc(count_ones)) %>% 
+    slice_head(n = 10) %>% 
+    dplyr::select(-count_ones) %>% 
+    mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+    mutate(across(everything(), ~replace(., . ==  0 , "WT")))
+  
+  # Change format to be compatible with phenotype data: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    rename(mut_gene = sample) %>% 
+    pivot_longer(cols = -mut_gene,
+                 names_to = "sample",
+                 values_to = "mutation") %>% 
+    pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                values_from = mutation, 
+                names_prefix = "mut_")
+  
+} else if (!c_type %in% names(mut_ctype)){
+  mut_ctype[[c_type]] <- read.csv(paste0(file_name_mut, ".tsv"),
+                                  sep = "\t")
+  
+  colnames(mut_ctype[[c_type]]) <- gsub("\\.", "-", colnames(mut_ctype[[c_type]]))
+  
+  # Keep only top 10 most mutated genes: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    mutate(count_ones = rowSums(dplyr::select(., -sample) == 1)) %>% # >= (0.1*num_cols))
+    arrange(desc(count_ones)) %>% 
+    slice_head(n = 10) %>% 
+    dplyr::select(-count_ones) %>% 
+    mutate(across(everything(), ~replace(., . ==  1 , "MUT"))) %>% 
+    mutate(across(everything(), ~replace(., . ==  0 , "WT")))
+    
+  
+  # Change format to be compatible with phenotype data: 
+  mut_ctype[[c_type]] <- mut_ctype[[c_type]] %>% 
+    rename(mut_gene = sample) %>% 
+    pivot_longer(cols = -mut_gene,
+                 names_to = "sample",
+                 values_to = "mutation") %>% 
+    pivot_wider(names_from = mut_gene,   # Convert gene names to separate columns
+                values_from = mutation, 
+                names_prefix = "mut_")
+}
+
+top10_mutations <- c(top10_mutations, colnames(mut_ctype[[c_type]]))
+#}
+
+top10_mutations <- top10_mutations %>% unlist() %>%  unique() 
+top10_mutations <- top10_mutations[-1]
+top10_mutations <- gsub("mut_", "", top10_mutations)
+```
+
+### Collect phenotype and mutation data
+
+```{r}
+full_phenotype <- list()
+selected_phenotype <- list()
+# Make one phenotype table containing all phenotypes:
+
+#for (c_type in cancer_abbr_list){
+df_pheno_c_type <-  df_pheno %>% 
+  filter(cancer.type.abbreviation == c_type)
+
+# Common colnames in two phenotype dataframes: 
+com_cols <- intersect(colnames(df_pheno_c_type), colnames(phenotype_ctype[[c_type]]))
+rm_cols <- com_cols[com_cols != "sample"]
+
+samples_w_data <- intersect(colnames(transcript_count[[c_type]]), colnames(transcript_tpm[[c_type]]))
+
+# Filter out samples that are not in expected count data:
+# Add the extra ctype specific phenotype data: 
+# Add mutation data for top 10 most mutated genes: 
+df_pheno_2 <- df_pheno %>% 
+  filter(sample %in% samples_w_data) %>% 
+  dplyr::select(-rm_cols) %>% 
+  left_join(phenotype_ctype[[c_type]], by = "sample") %>% 
+  left_join(mut_ctype[[c_type]], by = "sample")
+  
+# Change blank cells to NA
+df_pheno_2[df_pheno_2 == ""] <- NA
+
+# Remove columns only consisting of NAs: 
+df_pheno_2 <- df_pheno_2 %>% 
+  select_if(function(x) { sum (!is.na(x)) >0})
+
+rownames(df_pheno_2) <- df_pheno_2$sample
+
+full_phenotype[[c_type]] <- df_pheno_2
+
+selected_phenotype[[c_type]] <- full_phenotype[[c_type]] %>% 
+  dplyr::select(sample, interesting_phenotype[[c_type]], starts_with("mut"))
+
+#}
+
+```
+
+### GTF file
+
+```{r}
+library(rtracklayer)
+
+# Download GTF file (found version and gtf name from metadata xena browser, downloaded the gtf from https://www.gencodegenes.org/human/release_23.html)
+#gtf_download_url <- "https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_23/gencode.v23.annotation.gtf.gz"
+file_path_gtf <- paste0(file_path_data, "gencode.v23.annotation.targetsOnly.gtf")
+
+#if (!(file.exists(file_path_gtf))){
+# download.file(gtf_download_url, file_path_gtf, mode = "wb")
+#} 
+
+gtf_isoforms <- rtracklayer::readGFF(file_path_gtf) %>% 
+  dplyr::select(transcript_id) %>% 
+  unlist(use.names = F)
+
+transcript_count_ctype$isoform_id %in% gtf_isoforms
+```
+
+## Isoform Switch AnalyzeR
+
+<https://bioconductor.org/packages/devel/bioc/vignettes/IsoformSwitchAnalyzeR/inst/doc/IsoformSwitchAnalyzeR.html>
+
+```{r}
+#BiocManager::install("rjson")
+library(IsoformSwitchAnalyzeR)
+```
+
+### Setup
+
+```{r}
+# Start uden confounders, og læg på senere
+
+myDesign_ctype <- selected_phenotype[[c_type]] %>% 
+  dplyr::select(#gender, 
+                #age_at_initial_pathologic_diagnosis, 
+                mut_KRAS) %>% 
+  rownames_to_column("sampleID") %>% 
+  dplyr::rename(condition = mut_KRAS) %>% 
+  replace_na(list(condition = "unknown"))
+
+myDesign_ctype
+```
+
+```{r}
+# Use importRdata to upload data into a switchAnalyzeRlist: 
+# isoformCountMatrix = raw counts (transcript_count)
+# isoformRepExpression = transcripts per million (transcript_tpm)
+# designMatrix = defined in cell above (myDesign_ctype)
+# isoformExonAnnoation = reference database GTF corresponding to the fasta file used to build the refrence index (file_path_gtf)
+
+# Input only samples with phenotype and tpm and count data: 
+samples_w_data_pheno <- intersect(myDesign_ctype$sample,
+                                  c(colnames(transcript_count[[c_type]]),
+                                  colnames(transcript_tpm[[c_type]])))
+
+# Wrangle transcript count data. Should NOT be log2. 
+transcript_count_ctype <- transcript_count[[c_type]] %>% 
+  dplyr::select(transcript_id, samples_w_data_pheno) %>% 
+  dplyr::rename(isoform_id = transcript_id) %>% 
+  mutate(across(-isoform_id, function(x) 2^x-1))
+
+# Wrangle transcript tpm data. Should NOT be log2. 
+transcript_tpm_ctype <- transcript_tpm[[c_type]] %>% 
+  dplyr::select(transcript_id, samples_w_data_pheno) %>% 
+  dplyr::rename(isoform_id = transcript_id) %>% 
+  mutate(across(-isoform_id, function(x) 2^x))
+
+
+
+### Create switchAnalyzeRlist
+switchAnalyzeRlist <- importRdata(isoformCountMatrix = transcript_count_ctype,
+            isoformRepExpression = transcript_tpm_ctype,
+            designMatrix = myDesign_ctype,
+            isoformExonAnnoation = file_path_gtf
+            )
+
+transcript_tpm_ctype$isoform_id
+
+colnames(transcript_tpm_ctype) == colnames(transcript_count_ctype)
+
+
+```
+
+```{r}
+names(switchAnalyzeRlist)
+
+switchAnalyzeRlist$isoformFeatures
+
+transcript_count_ctype %>% dim()
+transcript_tpm_ctype %>% dim()
+myDesign_ctype %>% dim()
+
+samples_w_data_pheno %>%  length()
+```
+
+### Dummy data
+
+```{r}
+salmonQuant <- importIsoformExpression(
+    parentDir = system.file("extdata/",package="IsoformSwitchAnalyzeR")
+)
+
+salmonQuant
+
+myDesign <- data.frame(
+    sampleID = colnames(salmonQuant$abundance)[-1],
+    condition = gsub('_.*', '', colnames(salmonQuant$abundance)[-1])
+)
+
+aSwitchList <- importRdata(
+    isoformCountMatrix   = salmonQuant$counts,
+    isoformRepExpression = salmonQuant$abundance,
+    designMatrix         = myDesign,
+    isoformExonAnnoation = system.file("extdata/example.gtf.gz"             , package="IsoformSwitchAnalyzeR")
+)
+
+
+dummy_gtf <- system.file("extdata/example.gtf.gz"             , package="IsoformSwitchAnalyzeR")
+
+rtracklayer::readGFF(dummy_gtf) %>% 
+  dplyr :: select(transcript_id)
+
+
+salmonQuant$counts
+
+```
+
+## Plot
+
+### Heatmap
+
+```{r}
+
+gene_of_interest <- "ARG1"
+
+transcript_data[[c_type]] %>% 
+  pivot_longer(cols=-c("transcript_name", "gene_name", "transcript_id"),
+               names_to = "sample") %>% 
+  ggplot(aes(sample, transcript_id, fill=value)) + 
+  geom_tile() + 
+  facet_grid(gene_name~., scales="free_y") +
+  theme(
+  #  axis.text.y = element_blank(), 
+    axis.text.x = element_blank()
+  ) + 
+  labs(
+    title = element_text(paste0("Transcript expression in ", c_type))
+  )
+
+
+# Which are not coding. 
+# What transcript contain the target sequence (sent by email)
+
+```
+
+## Investigate the transcripts
+
+```{r}
+# Download the AA sequences of the coding transcripts: 
+
+transcript_info_filepath <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv"
+
+if (!(file.exists(transcript_info_filepath))){
+  df_transcripts <- tibble()
+  
+  for (gene in target_list){
+    df_transcripts <- bind_rows(df_transcripts, read_csv(paste0("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_", gene, ".csv"), show_col_types = FALSE))  
+  }
+
+  write_tsv(df_transcripts, transcript_info_filepath)
+}
+
+
+# Remove version numbers from the transcript ID. 
+transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>% 
+  mutate(`Transcript ID` = gsub("\\..*", "", `Transcript ID`)) %>% 
+  rename(transcript_id = `Transcript ID`) %>% 
+  arrange(Name)
+
+
+transcript_info_wSeq <- transcript_info %>% 
+  mutate(uniprot_seq = map(`UniProt Match`, function(uni_id) {
+    if (nchar(uni_id)>1){
+      print(uni_id)
+      # If contains a space, it might have two ids: Split
+      if (grepl(" ", uni_id)){
+        
+        seq_list <- list()
+        for (sub_id in unlist(strsplit(uni_id, " "))){
+          seq_list[[sub_id]] <- tryCatch({
+            read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", sub_id, ".fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]}, 
+            error = function(cond){
+              message(paste("Error ocurred when downloading:", sub_id))
+              message(conditionMessage(cond))
+              message("Trying to download from different link.")
+              read.fasta(url(paste0("https://rest.uniprot.org/unisave/", sub_id, "?format=fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]
+            })
+        }
+        return(seq_list)
+      } else {
+        read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", 
+                             uni_id, ".fasta")), 
+                  as.string = T, 
+                  seqtype = "AA", 
+                  set.attributes = F)[[1]]
+      }
+    } else 
+      NaN
+    }))
+
+# Check the nchar in the seq: (lengths)
+#transcript_info_wSeq %>% 
+#  mutate(seq_length = map(uniprot_seq, nchar)) %>% 
+#  View()
+
+# Unnest if more than one sequence:
+transcript_info_wSeq <- transcript_info_wSeq %>% 
+  mutate(uniprot_seq = map(uniprot_seq, ~ if (!is.list(.x)) list(.x) else .x)) %>%  # Convert characters to lists 
+  unnest(uniprot_seq)
+
+
+transcript_info_protein <- transcript_info_wSeq %>% 
+  dplyr::select(transcript_id, Protein, Biotype)
+
+```
+
+### Target sequences
+
+```{r}
+# Construct data frame of the target sequences recieved on email from Morten Holmstrom. 
+
+# Protein, name of epitope, epitope: 
+target_seq <- rbind(c("CD274", "IO103", "FMTYWHLLNAFTVTVPKDL"),
+      c("IDO1", "IO102", "DTLLKALLEIASCLEKALQVF"),
+      c("ARG1", "ARGLong2", "ISAKDIVYIGLRDVDPGEHYILKTLGIKYFSMTEVDRL"),
+      c("PDCD1LG2", "PD-L2Long1", "SLELQLHQIAALFTVTVPKEL"),
+      c("CCL22", "CCL22Long1", "MDRLQTALLVVLVLLAVALQAT"),
+      c("ARG2", "ARG2Long", "LQTRVHSILKKSVHSVAVIG"),
+      c("TGFb1", "TGFb_02", "LLLPLLWLLVLTPGRPAAGL"),
+      c("TGFb1", "TGFb_15", "REAVPEPVLLSRAELRLLRL"),
+      c("TGFb1", "TGFb_33", "FCLGPCPYIWSLDTQYSKVL"),
+      c("TGFb1", "TGFb_38", "GRKPKVEQLSNMIVRSCKCS"),
+      c("IL10", "IL10_L17", "FDIFINYIEAYMTMKIRN")) %>% 
+  as_tibble()
+
+colnames(target_seq) <- c("protein", "epitope_name", "epitope_seq")
+
+# Align to protein sequences of coding transcripts: 
+target_seq <- target_seq %>%
+  rowwise() %>%
+  mutate(matching_proteins = list(transcript_info_wSeq %>%
+                                    filter(str_detect(uniprot_seq, epitope_seq)) %>%
+                                    pull(Name))) %>%
+  ungroup() %>% 
+  unnest(matching_proteins) %>% 
+  distinct() # Remove duplicated rows. 
+
+prot_w_target_seq <- target_seq %>% 
+  dplyr::select(protein) %>% 
+  unique() %>% 
+  unlist(use.names = F) %>% 
+  toupper()
+
+
+target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
+```
+
+### Percentage of expression
+
+```{r}
+
+p_transcript_composition_w_epitope <- list()
+p_transcript_composition_wo_epitope <- list()
+
+#for (c_type in cancer_abbr_list_skcm){
+  
+transcript_data_ctype <- transcript_data[[c_type]] %>% 
+  left_join(transcript_info_protein, by="transcript_id") %>% 
+  mutate(target_seq_incl = ifelse(gene_name %in% target_match_trans, TRUE, FALSE)) %>% 
+  relocate(transcript_id, transcript_name, gene_name, Protein, Biotype, target_seq_incl) %>% 
+  mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+  mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                         ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+  dplyr::select(-c(Protein, target_seq_incl))
+
+
+transcript_data_ctype_long <- transcript_data_ctype %>% 
+  pivot_longer(cols = -c(transcript_id, transcript_name, gene_name, Biotype),
+               values_to = "transcript_exp",
+               names_to = "samples") %>% 
+  group_by(gene_name, samples) %>% 
+  mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+  mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+  mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+  ungroup() 
+
+  
+n_samples = transcript_data_ctype_long %>% 
+  dplyr::select(samples) %>% 
+  unique() %>% 
+  nrow()
+
+p_transcript_composition_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+  filter(gene_name %in% prot_w_target_seq) %>% 
+  ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+  geom_bar(stat = "identity", width = 1) +
+  facet_wrap(~gene_id_b) +
+  labs(#title = "Composition of expressed transcripts for \n8 genes with target epitopes",
+    subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Samples",
+    y = "Fraction"
+  ) +
+  #scale_fill_brewer(palette = "Dark2") + 
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff", "#79238eff", "#f6d04dff")) +
+  theme(
+    text=element_text(family="serif"),
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title = element_text(size = 13),
+    strip.background.x = element_blank(),
+    legend.position = ifelse(c_type == "LUSC", "right", "none")
+    )
+  
+p_transcript_composition_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+  filter(!gene_name %in% prot_w_target_seq) %>% 
+  ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+  geom_bar(stat = "identity", width = 1) +
+  facet_wrap(~gene_id_b) + 
+  labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+    subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Samples",
+    y = "Fraction"
+  ) +
+  #scale_fill_brewer(palette = "Dark2") + 
+  #scale_fill_viridis(option = "D", discrete = T) + 
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff","#79238eff", "#f6d04dff")) +
+  theme(
+    text=element_text(family="serif"),
+    plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title = element_text(size = 13),
+    strip.background.x = element_blank(),
+    legend.position = ifelse(c_type == "LUSC", "right", "none")
+    )
+  
+#}
+
+p_transcript_composition_w_epitope
+
+
+
+# Make a list of the pivot longer data frames: 
+transcript_data_long <- list()
+#for (c_type in cancer_abbr_list_skcm){
+transcript_data_long[[c_type]] <- transcript_data[[c_type]] %>% 
+  pivot_longer(cols = starts_with("TCGA"),
+               values_to = "transcript_exp",
+               names_to = "samples") %>% 
+  mutate(cancer_type = c_type)
+#}
+
+transcript_data_long_all <- bind_rows(transcript_data_long) %>% 
+  left_join(transcript_info_protein, by="transcript_id") %>% 
+  mutate(target_seq_incl = ifelse(transcript_name %in% target_match_trans, TRUE, FALSE)) %>% 
+  relocate(transcript_id, transcript_name, gene_name, Protein, Biotype, target_seq_incl) %>% 
+  mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+  mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                         ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+  group_by(cancer_type) %>% 
+  mutate(n=n_distinct(samples)) %>% 
+  ungroup() %>% 
+  mutate(cancer_name_n = paste0(cancer_type, "\n(n=", n, ")")) %>% 
+  dplyr::select(-c(Protein, target_seq_incl, n))
+
+# Make facet wrap of siglec in all cancer types. 
+transcript_data_long_all %>% 
+  group_by(gene_name, samples) %>% 
+  mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+  mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+  mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+  ungroup() %>% 
+  filter(gene_name == "SIGLEC15") %>% 
+  ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+  geom_bar(stat = "identity", width = 1) +
+  facet_wrap(~cancer_name_n, scales = "free") + 
+  labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+    subtitle = "SIGLEC15 isoform expression",
+    caption = "Source: Xena Browser, TCGA PANCAN",
+    x = "Samples",
+    y = "Fraction"
+  ) +
+  #scale_fill_brewer(palette = "Dark2") + 
+  #scale_fill_viridis(option = "D", discrete = T) + 
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff", "#f6d04dff")) +
+  theme(
+    text=element_text(family="serif", size = 20),
+    plot.title = element_text(color = "#0099f8", size = 30, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+    plot.caption = element_text(face = "italic"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+#    axis.title = element_text(size = 13),
+    strip.background.x = element_blank()
+    )
+
+
+c("BIRC7")
+
+transcript_data_long_all %>% 
+  dplyr::select(transcript_id, gene_name, Biotype) %>% 
+  mutate(Biotype = ifelse(Biotype == "target_epitope", "Protein coding", Biotype)) %>% 
+  distinct() %>% 
+  dplyr::select(-transcript_id) %>% 
+  group_by(gene_name, Biotype) %>% 
+  summarise(n=n()) %>% 
+  ggplot(aes(x=gene_name, y=n, fill = Biotype)) + 
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values = c("#1fd082ff", "#fc7634ff")) +
+  xlab("Gene id") + 
+  ylab("Number of isoforms*") +
+  labs(title = "Number of isoforms related to target genes") + 
+  scale_y_continuous(limits = c(0,10), breaks = seq(0,10)) + 
+  theme(#legend.position = "none",
+        axis.text.x = element_text(angle=20, vjust = 0.8),
+        axis.title = element_text(size=15),
+        text = element_text(family = "serif"),
+        title = element_text(size = 20),
+        axis.text = element_text(size=10))
+
+
+```
+
+## OLD
+
+### Plots
+
+#### Violin plots
+
+```{r}
+# Violin plots of original expression values 
+
+gene_w_single_transcript <- transcript_data_ctype_long %>% 
+  filter(samples == "TCGA-56-A5DR-01") %>% 
+  group_by(gene_id_b) %>% 
+  summarise(n=n()) %>% 
+  filter(n<2) %>% 
+  dplyr::select(gene_id_b) %>% 
+  unlist()
+
+
+p_transcript_exp_w_epitope <- list()
+p_transcript_exp_wo_epitope <- list()
+p_transcript_exp_single_trans <- list()
+
+for (c_type in cancer_abbr_list){
+    
+  transcript_data_ctype <- transcript_data[[c_type]] %>% 
+    left_join(transcript_info_protein, by="transcript_id") %>% 
+    mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+    dplyr::select(-c(Protein, target_seq_incl))
+  
+  
+  transcript_data_ctype_long <- transcript_data_ctype %>% 
+    pivot_longer(cols = -c(transcript_id, gene_id, gene_id_b, Biotype),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    group_by(gene_id_b, samples) %>% 
+    mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+    ungroup() 
+  
+  n_samples = transcript_data_ctype_long %>% 
+    dplyr::select(samples) %>% 
+    unique() %>% 
+    nrow()
+  
+  p_transcript_exp_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.title.x = element_text(vjust = 0),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  
+  p_transcript_exp_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(!gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      axis.title.x = element_text(vjust = 0),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  p_transcript_exp_single_trans[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+#      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+}
+
+
+p_transcript_exp_single_trans
+```

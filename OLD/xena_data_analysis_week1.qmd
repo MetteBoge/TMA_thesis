@@ -1,0 +1,258 @@
+---
+title: "xena_data_analysis"
+format: html
+editor: visual
+---
+
+## Load packages and targets
+
+```{r}
+library(tidyverse)
+library(R.utils)
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+
+```
+
+## Download data
+
+```{r}
+# Cohort:
+cohort = "TCGA_Acute_Myeloid_Leukemia_LAML"
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+```
+
+```{r}
+## Data
+data_type = "gene_expression_RNAseq_pancan_normalized"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_data <- paste0(cohort, "_", data_type)
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")))){
+  # Call the download.file() function, passing in the URL and file name/location as arguments
+  download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+}
+
+if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+  gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+}
+```
+
+```{r}
+## Phenotype
+data_type = "phenotype"
+
+# Specify the URL of the file you want to download
+url <- "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FLAML_clinicalMatrix"
+
+# Specify the file name and location where you want to save the file on your computer
+file_name_pheno <- paste0(cohort, "_", data_type)
+
+# Call the download.file() function, passing in the URL and file name/location as arguments
+if (!(file.exists(paste(file_path, file_name_pheno, ".tsv", sep = "")))){
+  download.file(url, paste(file_path, file_name_pheno, ".tsv", sep = ""), mode = "wb")
+}
+```
+
+```{r}
+df_data <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+df_phenotype <- read.csv(paste(file_path, file_name_pheno, ".tsv", sep = ""),sep = "\t")
+```
+
+## Gene expression across cohorts
+
+### Download data
+
+```{r}
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+
+data_type = "gene_expression_RNAseq_pancan_normalized"
+
+url_list <- c("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LAML.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CHOL.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.CESC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.DLBC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.HNSC.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.BRCA.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.PAAD.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.SKCM.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUAD.sampleMap%2FHiSeqV2_PANCAN.gz",
+              "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.LUSC.sampleMap%2FHiSeqV2_PANCAN.gz")
+cohort_list <- c("TCGA_LAML",
+                 "TCGA_CHOL",
+                 "TCGA_CESC",
+                 "TCGA_DLBC",
+                 "TCGA_HNSC",
+                 "TCGA_BRCA",
+                 "TCGA_PAAD",
+                 "TCGA_SKCM",
+                 "TCGA_LUAD",
+                 "TCGA_LUSC")
+```
+
+```{r}
+# Read the list with dataframes instead of running loop below: 
+readRDS("df_data_list.RData")
+```
+
+```{r}
+df_data_list <- c()
+
+for (i in 1:length(url_list)){
+  print(cohort_list[i])
+  
+  url <- url_list[i]
+  file_name_data <- paste0(cohort_list[i], "_", data_type)
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv.gz", sep = "")) | 
+        file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    download.file(url, paste(file_path, file_name_data, ".tsv.gz", sep = ""), mode = "wb")
+  }
+  
+  if (!(file.exists(paste(file_path, file_name_data, ".tsv", sep = "")))){
+    gunzip(paste(file_path, file_name_data, ".tsv.gz", sep = ""))
+  }
+  
+  df_data_list[[i]] <- read.csv(paste(file_path, file_name_data, ".tsv", sep = ""),sep = "\t")
+}
+
+saveRDS(df_data_list, file="df_data_list.RData")
+```
+
+### Wrangle data
+
+```{r}
+# Preprocess data frames to be pivot long and add cancer type as column:
+preproc_df_list <- Map(function(df, cohort_x) {
+  filter(df, sample %in% target_list) %>% 
+    rename(target = sample) %>% 
+    pivot_longer(cols = -target, 
+                 names_to = "sample", 
+                 values_to = "gene_exp") %>% 
+    mutate(cancer_type = str_remove(cohort_x, "TCGA_"))
+}, df_data_list, cohort_list)
+
+full_df <- bind_rows(preproc_df_list) 
+
+full_df <- full_df %>% 
+  group_by(cancer_type) %>% 
+    mutate(cancer_name = paste0(cancer_type, " n=", n_distinct(sample))) %>% 
+    ungroup() %>% 
+  mutate(g_name = ifelse(target == "CD274", "CD274 (PD-L1)",
+                         ifelse(target == "PDCD1LG2", "PDCD1LG2 (PD-L2)", 
+                                ifelse(target == "CCL2", "CCL2 (MCP-1)",
+                                       ifelse(target == "BIRC7", "BIRC7 (MLIAP)",
+                                              ifelse(target == "LRRC32", "LRRC32 (GARP)",
+                                                     ifelse(target == "TDO2", "TDO2 (TDO)", target))))))) 
+
+
+targets_in_df_list <- full_df %>% 
+  select(target) %>% 
+  unique() %>% 
+  as.list() %>% 
+  unlist()
+
+```
+
+```{r}
+full_df
+```
+
+### Plot
+
+```{r}
+target_x = targets_in_df_list[2]
+
+get_box_stats <- function(y, upper_limit = max(filter(full_df, target==target_x)$gene_exp) * 1.5) {
+  return(data.frame(
+    y = 0.95 * upper_limit,
+    label = paste(
+      "n =", length(y)
+    )
+  ))
+}
+
+
+full_df %>% 
+  ggplot(aes(x=g_name, y=gene_exp)) +
+    geom_boxplot() +
+    geom_hline(aes(yintercept = 0), color = "red", linetype=2) +
+    theme_classic() +
+    labs(
+      title = "Gene expression RNAseq pan cancer",
+      #subtitle = "Gene expression RNAseq pan cancer",
+      caption = "Source: Xena browser, TCGA",
+      x = "Cancer type",
+      y = "Pan-cancer normalized log2(norm_count+1)"
+    ) + 
+#    stat_summary(fun.data = get_box_stats, geom = "text", hjust = 0.5, vjust = 0.9, size= 3.5) +
+    theme(
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.text.x = element_text(angle=40, vjust = 0.6)
+    ) +
+    facet_wrap(~ cancer_name, scales="free") +
+    scale_y_continuous(limits = c(-10,10))
+```
+
+## Phenotypic relations, cancer specific
+
+Take gene_exp data used from before and load in the phenotype data for the studies. Load survival data as well.
+
+One study at a time, look at gene expression of targets and correlation to phenotypes.
+
+### Download phenotype and survival data
+
+```{r}
+file_path <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+dir.create(file_path, showWarnings = FALSE, recursive = TRUE)
+
+data_type = "phenotype"
+
+url_phenotype_list <- c("https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LAML.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-CHOL.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-CESC.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-DLBC.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-HNSC.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-BRCA.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-PAAD.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-SKCM.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LUAD.GDC_phenotype.tsv.gz",
+                        "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LUSC.GDC_phenotype.tsv.gz"
+              )
+
+url_survival_list <- c("https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LAML.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-CHOL.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-CESC.survival.tsv", 
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-DLBC.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-HNSC.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-BRCA.survival.tsv", 
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-PAAD.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-SKCM.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LUAD.survival.tsv",
+                       "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LUSC.survival.tsv"
+              )
+cohort_list <- c("TCGA_LAML",
+                 "TCGA_CHOL",
+                 "TCGA_CESC",
+                 "TCGA_DLBC",
+                 "TCGA_HNSC",
+                 "TCGA_BRCA",
+                 "TCGA_PAAD",
+                 "TCGA_SKCM",
+                 "TCGA_LUAD",
+                 "TCGA_LUSC")
+```
+
+```{r}
+df_phenotype
+```
