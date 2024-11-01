@@ -14,11 +14,11 @@ c_type <- "PAAD"
 ```{r}
 library(tidyverse)
 library(R.utils)
-library(arrow)
+#library(arrow)
 library(biomaRt)
 library(seqinr)
 library(RColorBrewer)
-library(viridis)
+#library(viridis)
 ```
 
 ```{r}
@@ -332,7 +332,7 @@ transcript_tpm <- list()
 #for (c_type in cancer_abbr_list){
 df_tmp <- read.csv(paste0(file_path_git, 
                           "transcript_expression/TCGA_pancan_tpm_transcripts_", c_type, ".tsv"), sep="\t") %>%
-  rename(transcript_id = sample, 
+  dplyr::rename(transcript_id = sample, 
          transcript_name = Name)
 
 colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
@@ -364,7 +364,7 @@ transcript_count <- list()
 df_tmp <- read.csv(paste0(file_path_git, 
                           "transcript_expression/TCGA_pancan_expected_count_transcripts_", c_type, ".tsv"), 
                    sep="\t") %>%
-  rename(transcript_id = sample, 
+  dplyr::rename(transcript_id = sample, 
          transcript_name = Name)
 
 colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
@@ -543,7 +543,7 @@ gtf_isoforms <- rtracklayer::readGFF(file_path_gtf) %>%
   dplyr::select(transcript_id) %>% 
   unlist(use.names = F)
 
-transcript_count_ctype$isoform_id %in% gtf_isoforms
+#transcript_count_ctype$isoform_id %in% gtf_isoforms
 ```
 
 ## Isoform Switch AnalyzeR
@@ -552,7 +552,7 @@ transcript_count_ctype$isoform_id %in% gtf_isoforms
 
 ```{r}
 #BiocManager::install("rjson")
-library(IsoformSwitchAnalyzeR)
+library(IsoformSwitchAnalyzeR) # 2.6.0
 ```
 
 ### Setup
@@ -598,7 +598,7 @@ transcript_tpm_ctype <- transcript_tpm[[c_type]] %>%
 
 
 ### Create switchAnalyzeRlist
-switchAnalyzeRlist <- importRdata(isoformCountMatrix = transcript_count_ctype,
+switchAnalyzeRlist <- IsoformSwitchAnalyzeR::importRdata(isoformCountMatrix = transcript_count_ctype,
             isoformRepExpression = transcript_tpm_ctype,
             designMatrix = myDesign_ctype,
             isoformExonAnnoation = file_path_gtf
@@ -606,9 +606,10 @@ switchAnalyzeRlist <- importRdata(isoformCountMatrix = transcript_count_ctype,
 
 transcript_tpm_ctype$isoform_id
 
-colnames(transcript_tpm_ctype) == colnames(transcript_count_ctype)
+#colnames(transcript_tpm_ctype) == colnames(transcript_count_ctype)
+#transcript_tpm_ctype$isoform_id == transcript_count_ctype$isoform_id
 
-
+transcript_count_ctype %>%  head
 ```
 
 ```{r}
