@@ -735,7 +735,7 @@ make_all_contrasts <- function (group, delim="_vs_"){
     group <- sort(unique(as.character(group)), decreasing = TRUE)
   }
 
-    #/ make all combinations
+  #/ make all combinations
   cb   <- combn(group, 2, FUN = function(x){paste0(x[2], "-", x[1])})
   
   #/ make contrasts
@@ -752,7 +752,15 @@ is_all_numeric <- function(x) {
   all(!is.na(suppressWarnings(as.numeric(x))))
 }
 
-#group <- dge_filtered$samples[[x_pheno]]
+group <- dge_filtered$samples[[x_pheno]]
+
+
+contrasts_mat %>% as.data.frame()
+
+design_mat %>% as.data.frame()
+make_all_contrasts(dge_filtered$samples[[x_pheno]])
+    
+make_all_contrasts(group)
 
 ```
 
@@ -838,9 +846,13 @@ for (x_pheno in phenos_to_test){
     # Make colnames of design matrix match rownames in contrast_mat: 
     new_colnames <- sub(paste0("^", x_pheno), "", colnames(design_mat))
     # Add X in front like the make_all_contrasts if numeric: 
-    colnames(design_mat) <- ifelse(grepl("^[0-9.]+$", new_colnames), 
-                                   paste0("X", new_colnames), 
-                                   new_colnames)
+    colnames(design_mat) <- make.names(new_colnames)
+    
+    #colnames(design_mat) <- ifelse(grepl("^[0-9.]+$", new_colnames), 
+    #                               paste0("X", new_colnames), 
+    #                               new_colnames)
+    
+    
     
     # Make contrast matrix: 
     contrasts_mat <- make_all_contrasts(dge_filtered$samples[[x_pheno]])
@@ -895,7 +907,10 @@ for (x_pheno in phenos_to_test){
 
 }
   
+vfit$coefficients %>% as.data.frame()
 
+
+contrasts_mat %>% as.data.frame()
 ```
 
 #### Results of univariate analysis
