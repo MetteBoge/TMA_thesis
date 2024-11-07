@@ -551,19 +551,6 @@ library(IsoformSwitchAnalyzeR) # 2.6.0
 ### Setup
 
 ```{r}
-## GTF file: 
-aSwitchList <- importGTF(pathToGTF = file_path_gtf)
-
-intersect(aSwitchList[[1]]$isoform_id, transcript_count_ctype$isoform_id) %>% length()
-
-setdiff(aSwitchList[[1]]$isoform_id, transcript_tpm_ctype$isoform_id)
-
-aSwitchList[[1]]["ENST00000582017.1" == aSwitchList[[1]]$isoform_id,]
-
-transcript_tpm_ctype$isoform_id %>% length()
-```
-
-```{r}
 # Start uden confounders, og læg på senere
 
 myDesign_ctype <- selected_phenotype[[c_type]] %>% 
