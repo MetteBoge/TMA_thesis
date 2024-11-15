@@ -16,11 +16,11 @@ plot_mds <- FALSE
 c_type <- "PAAD"
 # Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
 sub_ctype <- "SKCM_tumor"
-# PAAD, BRCA
+# PAAD
 
 # After multivariate analysis I look at significant phenotypes, but filter out the ones that are <min_sample_size for any of the two categories being compared. 
 # 10 has been standard.
-min_sample_size <- 10
+min_sample_size <- ifelse(c_type == "CHOL", 5, 10)
 ```
 
 ## Load libraries and data
@@ -60,8 +60,8 @@ cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "S
 interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenetics_risk_category",
                                          "age_at_initial_pathologic_diagnosis",
                                          "gender",
-                                "leukemia_french_american_british_morphology_code",
-                                "molecular_analysis_abnormality_testing_result"
+                                "leukemia_french_american_british_morphology_code"
+# Almost all are NA             "molecular_analysis_abnormality_testing_result"
                                 ),
                               "CHOL" = c("age_at_initial_pathologic_diagnosis",
                                          "ca_19_9_level",
@@ -69,7 +69,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "eastern_cancer_oncology_group",
                                          "gender",
                                          "histological_type",
-                                         "history_of_neoadjuvant_treatment",
+# Only one had YES                       "history_of_neoadjuvant_treatment",
                                          "neoplasm_histologic_grade",
                                          "pathologic_stage",
                                          "radiation_therapy"),
@@ -80,7 +80,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "additional_radiation_therapy",
                                          "age_at_initial_pathologic_diagnosis",    # This is same as ER_Status_nature2012 "breast_carcinoma_estrogen_receptor_status",
                                          "er_level_cell_percentage_category",
-                                         "gender",
+# Only using female samples              "gender",
                                          "histological_type",
                                          "history_of_neoadjuvant_treatment",
                                          "margin_status",
@@ -97,8 +97,8 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "eastern_cancer_oncology_group",
                                          "gender",
                                          "histological_type",
-                                         "history_of_neoadjuvant_treatment",
-                                         "human_papillomavirus_type",
+# All have NO                            "history_of_neoadjuvant_treatment",
+# Too few in each subtype                "human_papillomavirus_type",
                                          "neoplasm_histologic_grade",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy",
@@ -120,7 +120,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "extranodal_involvement",
                                          "gender",
                                          "histological_type",
-                                         "hiv_status",
+# All have Negative                      "hiv_status",
                                          "ldh_level",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy"),
@@ -184,7 +184,7 @@ rename_phenotype = list(
   "acute_myeloid_leukemia_calgb_cytogenetics_risk_category" = "AML calgb Cytogenetics Risk",
   "age_at_initial_pathologic_diagnosis" = "Age at Diagnosis",
   "gender" = "Gender",
-  "leukemia_french_american_british_morphology_code" = "FAB subtype",
+  "leukemia_french_american_british_morphology_code" = "FAB classification",
   "ca_19_9_level" = "CA 19-9 level",
   "child_pugh_classification_grade" = "Child-Pugh classification",
   "eastern_cancer_oncology_group" = "ECOG Performance Status",
@@ -233,6 +233,9 @@ df_clin_pd <- read.csv(paste(file_path_xenadata,
 
 df_pheno <- df_clin_pd %>% 
   full_join(df_st_pd, by = "sample")
+
+interesting_phenotype %>% summary(
+)
 ```
 
 ```{r}
@@ -368,8 +371,15 @@ df_pheno_c_type <- df_pheno %>%
 # Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
 # For Melanoma, both metastatic and tumor. 
 if (c_type == "LAML"){
+ # Choose those who do not have atra_exposure
+ no_atra_exp <- phenotype_ctype[[c_type]] %>% 
+   filter(atra_exposure != "YES") %>% 
+   dplyr::select(sample) %>% 
+   unlist(use.names = F)
+ 
  sample_id_of_interest[[c_type]] <- df_pheno_c_type %>% 
-   filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
+   filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood",
+          sample %in% no_atra_exp) %>%
    dplyr::select(sample)
  
 } else if(c_type == "SKCM"){
@@ -473,15 +483,21 @@ df_pheno_2 <- df_pheno_2 %>%
 rownames(df_pheno_2) <- df_pheno_2$sample
 
 # Select only phenotypes of interst and top10 mutations:
+# Select only samples of interest as well
 df_pheno_of_interst <- df_pheno_2 %>% 
-  dplyr::select(interesting_phenotype[[c_type]], starts_with("mut"))
+  dplyr::select(interesting_phenotype[[c_type]], starts_with("mut")) %>% 
+  filter(row.names(df_pheno_2) %in% samples_to_select)
 
 # Change "[Discrepancy]" and "Not_Classified" to be NA: 
 df_pheno_of_interst <- df_pheno_of_interst %>% 
   mutate_all(~replace(., . == "[Discrepancy]", NA)) %>% 
   mutate_all(~replace(., . == "Not Classified", NA)) %>% 
   mutate_all(~replace(., . == "Other, specify", NA)) %>% 
-  mutate_all(~replace(., . == "Mixed Histology (please specify)", NA))
+  mutate_all(~replace(., . == "Mixed Histology (please specify)", NA)) %>% 
+  mutate_all(~replace(., . == "GX", NA)) %>% 
+  mutate_all(~replace(., . == "Stage_X", NA)) %>% 
+  mutate_all(~replace(., . == "RX", NA)) %>% 
+  mutate_all(~replace(., . == "Indeterminate", NA)) 
 
 # Change errors entries with pipe: 
 df_pheno_of_interst <- df_pheno_of_interst %>% 
@@ -516,19 +532,31 @@ if("histological_type" %in% colnames(df_pheno_of_interst)) {
 }
 
 
-# Change age to be over or below median instead (young, old)
+# Change age to be based on quantiles instead (young, old)
 if ("age_at_initial_pathologic_diagnosis" %in% colnames(df_pheno_of_interst)){
-  median_age <- df_pheno_of_interst %>% 
+  stat_age <- df_pheno_of_interst %>% 
     dplyr::select(age_at_initial_pathologic_diagnosis) %>% 
     unlist() %>% as.numeric() %>% 
-    median()
+    summary()
+
+  q1_age <- stat_age["1st Qu."] %>% as.numeric()
+  median_age <- stat_age["Median"] %>% as.numeric()
+  q3_age <- stat_age["3rd Qu."] %>% as.numeric()
   
   df_pheno_of_interst <- df_pheno_of_interst %>% 
-    mutate(age_at_initial_pathologic_diagnosis = factor(ifelse(
-      age_at_initial_pathologic_diagnosis > median_age, 
-      "older_than_median", 
-      "younger_than_or_eq_median")
-    ))
+    mutate(age_at_initial_pathologic_diagnosis = 
+             as.numeric(age_at_initial_pathologic_diagnosis)) %>% 
+    mutate(
+    age_at_initial_pathologic_diagnosis = case_when(
+      age_at_initial_pathologic_diagnosis < q1_age ~ paste0("less_than_", q1_age),
+      age_at_initial_pathologic_diagnosis >= q1_age & 
+        age_at_initial_pathologic_diagnosis < median_age ~ paste0("between_", q1_age, "_(incl)_and_", median_age, "_(excl)"),
+      age_at_initial_pathologic_diagnosis >= median_age & 
+        age_at_initial_pathologic_diagnosis < q3_age ~ paste0("between_", median_age, "_(incl)_and_", q3_age, "_(excl)"),
+      age_at_initial_pathologic_diagnosis >= q3_age ~  paste0("less_than_",
+                                                              q3_age)
+    )
+  )
 } 
 
 # # Create a new factor that combines categories
@@ -545,13 +573,26 @@ if("alcoholic_exposure_category" %in% colnames(df_pheno_of_interst)) {
 
 #frequency_of_alcohol_consumption
 
+#stop("Continue here")
+##### NB!  ! ! ! ! ! USE MEDIAN, QUARENTILES AS SUGGESTED BY CHAT GPT #####
+if ("breslow_depth_value" %in% colnames(df_pheno_of_interst)){
+  df_pheno_of_interst[["breslow_depth_value"]] %>% 
+    as.numeric() %>% 
+    summary()
+  
+}
+
 # Collect three of the neoplasm histologic stages into one: 
 if("neoplasm_histologic_grade" %in% colnames(df_pheno_of_interst)) {
-  df_pheno_of_interst <- df_pheno_of_interst %>% 
-    mutate(neoplasm_histologic_grade = factor(
-      ifelse(neoplasm_histologic_grade %in% c("G3", "G4", "GX"), 
-         "G3_G4_GX", 
-         neoplasm_histologic_grade)))
+  
+  if (c_type %in% c("PAAD", "CESC")){
+    df_pheno_of_interst <- df_pheno_of_interst %>% 
+      mutate(neoplasm_histologic_grade = factor(
+        ifelse(neoplasm_histologic_grade %in% c("G3", "G4"), 
+           "G3_G4", 
+           neoplasm_histologic_grade)))
+  }
+  
 }
 
 # Collect stages into one: 
@@ -568,7 +609,7 @@ if("pathologic_stage" %in% colnames(df_pheno_of_interst)) {
                   ifelse(pathologic_stage %in% c("Stage_III", "Stage_IV"),
                          "Stage_III_IV", pathologic_stage)))))
     
-  } else if(c_type == "SKCM"){
+  } else {
     
     df_pheno_of_interst <- df_pheno_of_interst %>% 
       mutate(pathologic_stage = factor(
@@ -580,28 +621,64 @@ if("pathologic_stage" %in% colnames(df_pheno_of_interst)) {
                   ifelse(pathologic_stage %in% c( "Stage_IIIA",
                                                   "Stage_IIIB",
                                                   "Stage_IIIC"),
-                         "Stage_III", pathologic_stage)))))
+                         "Stage_III", ifelse(pathologic_stage %in% c( "Stage_IVA",
+                                                                      "Stage_IVB",
+                                                                      "Stage_IVC"),
+                                             "Stage_IV", pathologic_stage))))))
     
   }
+  
+}
+
+# Collect stages into one: 
+if("clinical_stage" %in% colnames(df_pheno_of_interst)) {
+  df_pheno_of_interst <- df_pheno_of_interst %>% 
+    mutate(clinical_stage = case_when(clinical_stage %in% c("Stage_IA", 
+                                                            "Stage_IA1",
+                                                            "Stage_IA2",
+                                                            "Stage_IB",
+                                                            "Stage_IB1",
+                                                            "Stage_IB2") ~ "Stage_I",
+                                      clinical_stage %in% c("Stage_IIA", 
+                                                            "Stage_IIA1",
+                                                            "Stage_IIA2",
+                                                            "Stage_IIB") ~ "Stage_II",
+                                      clinical_stage %in% c("Stage_IIIA",
+                                                            "Stage_IIIB") ~ "Stage_III",
+                                      clinical_stage %in% c("Stage_IVA",
+                                                            "Stage_IVB") ~ "Stage_IV"))
+    
   
 }
 
 
 # Change tobacco smoking history scale to uncerstandable strings: 
 if("tobacco_smoking_history" %in% colnames(df_pheno_of_interst)) {
-  df_pheno_of_interst <- df_pheno_of_interst %>% 
-    mutate(tobacco_smoking_history = factor(
-      ifelse(tobacco_smoking_history == 1, 
-         "Lifelong_NonSmoker", 
-         ifelse(tobacco_smoking_history == 2,
-                "Current_smoker", 
-                ifelse(tobacco_smoking_history == 3,
-                       "Former_smoker_more_than_15y", 
-                       ifelse(tobacco_smoking_history == 4,
-                              "Former_smoker_less_than_15y", 
-                              ifelse(tobacco_smoking_history == 5,
-                                     "Former_smoker_duration_na", 
-                                     tobacco_smoking_history)))))))
+  
+  if (c_type == "CESC"){
+    df_pheno_of_interst <- df_pheno_of_interst %>% 
+      mutate(tobacco_smoking_history = factor(
+        ifelse(tobacco_smoking_history == 1, 
+           "Lifelong_NonSmoker", 
+           ifelse(tobacco_smoking_history == 2,
+                  "Current_smoker", 
+                  ifelse(tobacco_smoking_history %in% c(3,4,5),
+                         "Former_smoker", tobacco_smoking_history)))))
+  } else {
+    df_pheno_of_interst <- df_pheno_of_interst %>% 
+      mutate(tobacco_smoking_history = factor(
+        ifelse(tobacco_smoking_history == 1, 
+           "Lifelong_NonSmoker", 
+           ifelse(tobacco_smoking_history == 2,
+                  "Current_smoker", 
+                  ifelse(tobacco_smoking_history == 3,
+                         "Former_smoker_more_than_15y", 
+                         ifelse(tobacco_smoking_history == 4,
+                                "Former_smoker_less_than_15y", 
+                                ifelse(tobacco_smoking_history == 5,
+                                       "Former_smoker_duration_na", 
+                                       tobacco_smoking_history)))))))
+  }
 }
 
 # Change percentage buckets to numbers using the mean: 
@@ -648,6 +725,8 @@ df_pheno_of_interst <- df_pheno_of_interst %>%
   mutate_if(is.character, ~ ifelse(is.na(.), NA, make.names(.))) %>% 
   mutate_if(is.character, as.factor)
 
+top10_mutations <- make.names(top10_mutations)
+
 ### Change so WT is first level, and MUT is next in mutations  !
 df_pheno_of_interst[top10_mutations] <- lapply(df_pheno_of_interst[top10_mutations], function(x) {
     if (is.factor(x)) {
@@ -672,12 +751,22 @@ mat_exp_count_ctype <- df_expected_count[[c_type]] %>%
   column_to_rownames("sample") %>% 
   as.matrix()
 
+# Make a list of the phenotypes with at least two groups.
+pheno_more_than_one_subtype <- df_pheno_of_interst %>% 
+  summarise(across(everything(), ~ n_distinct(., na.rm = TRUE))) %>% 
+  dplyr::select(where(~ . > 1)) %>%
+  names()
+
+# Filter phenotype table to only have the ones with at least 2 groups. 
+df_pheno_of_interst <- df_pheno_of_interst %>% 
+  dplyr::select(all_of(pheno_more_than_one_subtype))
+
 # Create dge object: 
-# Make sure phenotypes are factors:  
 dge <- DGEList(counts = mat_exp_count_ctype, 
-               samples = mutate_all(df_pheno_of_interst, as.factor)) %>% 
-  calcNormFactors("TMM") # Normalizing gene expression distributions. See factors like: dge$samples$norm.factors
-#}
+               samples = df_pheno_of_interst)
+
+
+# I used to do calcNormFactors("TMM") here. But I think I need to do it later after filtering lowly expressed genes. And also, it is synonym to normLibSizes which I use in later step. https://support.bioconductor.org/p/9152808/ 
 
 ```
 
@@ -688,21 +777,11 @@ dge <- DGEList(counts = mat_exp_count_ctype,
 Same as PCA ? (multidimensional scaling (MDS) plot)
 
 ```{r}
-#dge$samples$X_GENOMIC_ID_TCGA_PAAD_mutation_broad_gene
-```
-
-```{r}
 # Plotting PCA
-
-
-
-
 
 #cpm(dge, log=TRUE) %>% as.data.frame()
 
 #interesting_phenotype[[c_type]]
-
-
 
 if(plot_mds){
   library(RColorBrewer)
@@ -748,60 +827,6 @@ if(plot_mds){
 
 Differential gene expression analysis is used to find genes that are significantly expressed in one group compared to another. limma-voom uses a moderated t-statistic, which has greater power than a normal t-test when applied to gene expression data. This is because the limma-voom t-statistic borrow information across genes for a gene expression dataset (using Bayesian statistics).
 
-#### Filtering data
-
-To increase the power when detecting differential expressed genes, we have to filter out low-expressed genes. Use a density plot to determine the cut off for low-expressed genes (see below). A common guideline is to keep genes expressed at least 1 cpm in the smallest group of samples (e.g. 10 healthy vs 44 sick). -we dont have a specific group, but we can say e.g. 1 cpm in at least 25% of samples (around same cutoff as 10/44).
-
-```{r}
-# Number of samples: 
-n_samples <- dge$samples$sample %>% length()
-
-keepTheseGenes <- rowSums(cpm(dge) > 1) >= 0.25*n_samples
-
-# Density plot og gene expression
-#dge %>% 
-#  cpm(log = TRUE) %>% 
-#  melt %>% 
-#  dplyr::filter(is.finite(value)) %>% 
-#  ggplot(aes(x = value, colour = Var2)) +
-#  geom_density() + 
-#  guides(colour = FALSE) +
-#  labs(x = "logCPM", y = "Density")
-```
-
-```{r}
-beforeFiltering_plot <- dge %>% 
-  cpm(log = TRUE) %>% 
-  melt %>% 
-  dplyr::filter(is.finite(value)) %>% 
-  ggplot(aes(x = value, colour = Var2)) +
-  geom_density() + 
-  guides(colour = FALSE) +
-  ggtitle("A. Before filtering", subtitle = paste0(nrow(dge), " genes")) +
-  labs(x = "logCPM", y = "Density")
-
-afterFiltering_plot <- dge %>% 
-  cpm(log = TRUE) %>% 
-  magrittr::extract(keepTheseGenes,) %>%
-  melt %>% 
-  dplyr::filter(is.finite(value)) %>% 
-  ggplot(aes(x = value, colour = Var2)) +
-  geom_density() + 
-  guides(colour = FALSE) +
-  ggtitle("B. After filtering")+#, subtitle = paste0(table(keepTheseGenes)[[2]], " genes"))+
-  labs(x = "logCPM", y = "Density")
-
-#beforeFiltering_plot
-#afterFiltering_plot
-```
-
-```{r}
-# Update the dge object: 
-
-dge <- dge[keepTheseGenes,,keep.lib.sizes = FALSE] 
-
-```
-
 #### Univariate linear regression analysis with LIMMA
 
 ```{r}
@@ -841,8 +866,6 @@ is_all_numeric <- function(x) {
 
 ```
 
-# 
-
 ```{r}
 # Loop through all the interesting phenotypes to find significantly differentially expressed target genes in the different conditions: 
 
@@ -853,9 +876,6 @@ if (!file.exists(R_element_name)){
   
   # Empty list to save table with logFC and p values all the phenotypes:
   list_df_logFC_pval <- list()
-  
-  # Empty list to save efit: 
-  #list_efit <- list()
   
   phenos_to_test <- df_pheno_of_interst %>% colnames()
   
@@ -874,127 +894,128 @@ if (!file.exists(R_element_name)){
     dge_filtered <- dge[,is_not_na_pheno,keep.lib.size=FALSE]
     
     # If at least two unique conditions/categories of this phenotype then run, otherwise skip.
-    if (length(unique(dge_filtered$samples[[x_pheno]])) > 1){
+   # if (length(unique(dge_filtered$samples[[x_pheno]])) > 1){
       
-      # Find out if the current phenotype is continuous variable :
-      if (is_all_numeric(dge_filtered$samples[[x_pheno]])){
-        
-        dge_filtered$samples[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
-          as.numeric()
-        
-        design_mat <- model.matrix(~dge_filtered$samples[[x_pheno]])
-        
-        # Change name of second column to phenotype: 
-        colnames(design_mat)[2] <- x_pheno
-        
-        # Filter out (more) low count genes, but make sure our target genes are kept: 
-        keep <- filterByExpr(dge_filtered, design_mat)
-        keep[target_list] <- TRUE
-    
-        # Filter dge object to only contain samples from design matrix (NAs removed);
-        #dge_filtered <- dge_filtered[keep, rownames(design_mat),keep.lib.size=FALSE]
-        dge_filtered <- dge_filtered[keep, ,keep.lib.size=FALSE]
-        dge_filtered <- normLibSizes(dge_filtered)
-        
-        voomData <- voom(dge_filtered, design = design_mat, plot = F)
-        vfit <- lmFit(voomData, design_mat)
-        
-        # Do not use trend=TRUE when I use voom. 
-        # https://support.bioconductor.org/p/98201
-        # ChatGPT suggest using voom for RNAseq data. 
-        efit <- eBayes(vfit, trend = FALSE)
-        
-        list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
-                                                  adjust.method = "fdr",
-                                                  number = Inf,
-                                                  coef = x_pheno) %>%
-          rownames_to_column("gene") %>% 
-          filter(!str_detect(gene, "^ENSG")) %>% 
-          mutate(phenotype = x_pheno,
-                 comparison = "continuous_linear_relations")
+    # Find out if the current phenotype is continuous variable :
+    if (is_all_numeric(dge_filtered$samples[[x_pheno]])){
+      
+      # Make numeric if possible (tested in if statement)
+      dge_filtered$samples[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
+        as.numeric()
+      
+      design_mat <- model.matrix(~dge_filtered$samples[[x_pheno]])
+      
+      # Change name of second column to phenotype: 
+      colnames(design_mat)[2] <- x_pheno
+      
+      # Filter out (more) low count genes, but make sure our target genes are kept:
+      keep <- filterByExpr(dge_filtered, design = design_mat)
+      keep[target_list] <- TRUE
+  
+      # Filter dge object to only contain samples from design matrix (NAs removed);
+      #dge_filtered <- dge_filtered[keep, rownames(design_mat),keep.lib.size=FALSE]
+      dge_filtered <- dge_filtered[keep, ,keep.lib.size=FALSE]
+      dge_filtered <- normLibSizes(dge_filtered, method = "TMM")
+      
+      voomData <- voom(dge_filtered, design = design_mat, plot = F)
+      vfit <- lmFit(voomData, design_mat)
+      
+      # Do not use trend=TRUE when I use voom. 
+      # https://support.bioconductor.org/p/98201
+      # ChatGPT suggest using voom for RNAseq data. 
+      efit <- eBayes(vfit, trend = FALSE)
+      
+      list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
+                                                adjust.method = "fdr",
+                                                number = Inf,
+                                                coef = x_pheno) %>%
+        rownames_to_column("gene") %>% 
+        filter(!str_detect(gene, "^ENSG")) %>% 
+        mutate(phenotype = x_pheno,
+               comparison = "continuous_linear_relations")
+      
+    } else {
+      
+      ### MAKE DESIGN AND CONTRAST MATRIX ##
+      options(na.action='na.omit') # DO not include if only NAs
+      design_mat <- model.matrix(as.formula(paste0("~0 + ", x_pheno)), 
+                         data = dge_filtered$samples)
+      
+      # Make colnames of design matrix match rownames in contrast_mat: 
+      new_colnames <- sub(paste0("^", x_pheno), "", colnames(design_mat))
+      # Add X in front like the make_all_contrasts if numeric: 
+      colnames(design_mat) <- make.names(new_colnames)
+      
+      # Make contrast matrix: 
+      contrasts_mat <- make_all_contrasts(dge_filtered$samples[[x_pheno]])
+      
+      
+      # Filter out (more) low count genes, but make sure our target genes are kept: 
+      keep <- filterByExpr(dge_filtered, design = design_mat)
+      keep[target_list] <- TRUE
+      
+      # Filter dge object to only contain samples from design matrix (NAs removed);
+      dge_filtered <- dge_filtered[keep, 
+                                   rownames(design_mat),keep.lib.size=FALSE]
+      dge_filtered <- normLibSizes(dge_filtered)
+      
+      # Total number of samples included in analysis
+      tot_sample_size <- ncol(dge_filtered)
+      
+      # Sample size of categories within this phenotype:
+      df_cat_sample_size <- dge_filtered$samples[[x_pheno]] %>% 
+        summary()
+      
+      voomData <- voom(dge_filtered, design = design_mat, plot = F)
+      vfit <- lmFit(voomData, design_mat)
+      cvfit <- contrasts.fit(vfit, contrast=contrasts_mat)
+      
+      # Do not use trend=TRUE when I use voom. 
+      # https://support.bioconductor.org/p/98201
+      # ChatGPT suggest using voom for RNAseq data. 
+      efit <- eBayes(cvfit, trend = FALSE)
+      
+      # Loop all comparisons to get topTreat table for all for later plotting
+      if (length(colnames(contrasts_mat)>1)){
+        for (c in colnames(contrasts_mat)){
+          list_comparisons[[c]] <- topTreat(efit, 
+                    adjust.method = "fdr",
+                    number = Inf,
+                    coef = c) %>% 
+              rownames_to_column("gene") %>% 
+              filter(!str_detect(gene, "^ENSG")) %>% 
+              mutate(phenotype = x_pheno,
+                     comparison = c,
+                     total_sample_size = tot_sample_size,
+                     cat_sample_size = paste0(unlist(str_split(c, "_vs_"))[1],
+                                              ":",
+                                              df_cat_sample_size[[unlist(str_split(c, "_vs_"))[1]]], 
+                                              ", ", 
+                                              unlist(str_split(c, "_vs_"))[2], 
+                                              ":", 
+                                              df_cat_sample_size[[unlist(str_split(c, "_vs_"))[2]]]))
+        }
+        list_df_logFC_pval[[x_pheno]] <- list_comparisons %>% 
+          bind_rows()
         
       } else {
-        
-        ### MAKE DESIGN AND CONTRAST MATRIX ##
-        options(na.action='na.omit') # DO not include if only NAs
-        design_mat <- model.matrix(as.formula(paste0("~0 + ", x_pheno)), 
-                           data = dge_filtered$samples)
-        
-        # Make colnames of design matrix match rownames in contrast_mat: 
-        new_colnames <- sub(paste0("^", x_pheno), "", colnames(design_mat))
-        # Add X in front like the make_all_contrasts if numeric: 
-        colnames(design_mat) <- make.names(new_colnames)
-        
-        # Make contrast matrix: 
-        contrasts_mat <- make_all_contrasts(dge_filtered$samples[[x_pheno]])
-        
-        
-        # Filter out (more) low count genes, but make sure our target genes are kept: 
-        keep <- filterByExpr(dge_filtered, design_mat)
-        keep[target_list] <- TRUE
-        
-        # Filter dge object to only contain samples from design matrix (NAs removed);
-        dge_filtered <- dge_filtered[keep, 
-                                     rownames(design_mat),keep.lib.size=FALSE]
-        dge_filtered <- normLibSizes(dge_filtered)
-        
-        # Total number of samples included in analysis
-        tot_sample_size <- ncol(dge_filtered)
-        
-        # Sample size of categories within this phenotype:
-        df_cat_sample_size <- dge_filtered$samples[[x_pheno]] %>% 
-          summary()
-        
-        voomData <- voom(dge_filtered, design = design_mat, plot = F)
-        vfit <- lmFit(voomData, design_mat)
-        cvfit <- contrasts.fit(vfit, contrast=contrasts_mat)
-        
-        # Do not use trend=TRUE when I use voom. 
-        # https://support.bioconductor.org/p/98201
-        # ChatGPT suggest using voom for RNAseq data. 
-        efit <- eBayes(cvfit, trend = FALSE)
-        
-        # Loop all comparisons to get topTreat table for all for later plotting
-        if (length(colnames(contrasts_mat)>1)){
-          for (c in colnames(contrasts_mat)){
-            list_comparisons[[c]] <- topTreat(efit, 
-                      adjust.method = "fdr",
-                      number = Inf,
-                      coef = c) %>% 
-                rownames_to_column("gene") %>% 
-                filter(!str_detect(gene, "^ENSG")) %>% 
-                mutate(phenotype = x_pheno,
-                       comparison = c,
-                       total_sample_size = tot_sample_size,
-                       cat_sample_size = paste0(unlist(str_split(c, "_vs_"))[1],
-                                                ":",
-                                                df_cat_sample_size[[unlist(str_split(c, "_vs_"))[1]]], 
-                                                ", ", 
-                                                unlist(str_split(c, "_vs_"))[2], 
-                                                ":", 
-                                                df_cat_sample_size[[unlist(str_split(c, "_vs_"))[2]]]))
-          }
-          list_df_logFC_pval[[x_pheno]] <- list_comparisons %>% 
-            bind_rows()
           
-        } else {
-            
-          # Save table with logFC and p values: 
-          list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
-                  adjust.method = "fdr",
-                  number = Inf) %>% 
-            rownames_to_column("gene") %>% 
-            filter(!str_detect(gene, "^ENSG")) %>% 
-            mutate(phenotype = x_pheno, 
-                  comparison = colnames(contrasts_mat),
-                  total_sample_size = tot_sample_size)
-        }
-        
+        # Save table with logFC and p values: 
+        list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
+                adjust.method = "fdr",
+                number = Inf) %>% 
+          rownames_to_column("gene") %>% 
+          filter(!str_detect(gene, "^ENSG")) %>% 
+          mutate(phenotype = x_pheno, 
+                comparison = colnames(contrasts_mat),
+                total_sample_size = tot_sample_size)
       }
-        
-    } else {
-      warning(paste(x_pheno, "has only one unique category after filtering!"))
+      
     }
+      
+ #   } else {
+#      warning(paste(x_pheno, "has only one unique category after filtering!"))
+ #   }
     
   }
   
@@ -1050,17 +1071,8 @@ full_table_w_low <- list_df_logFC_pval %>%
 table_w_adjP_sig <- full_table_w_low %>% 
   unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>% 
   group_by(condition) %>% 
-  filter(any(adj.P.Val < 0.05)) %>% 
-  ungroup()
-
-# Table with conditions with at least one gene is significant in regular P value, but NOT by multiple adjusting (adjusted P value)
-table_w_only_regP_sig <- full_table_w_low %>% 
-  unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>%
-  filter(!condition %in% table_w_adjP_sig$condition) %>% 
-  group_by(condition) %>% 
   filter(any(P.Value < 0.05)) %>% 
   ungroup()
-
 
 ```
 
@@ -1086,7 +1098,7 @@ pdf(file = paste0(path_save_plots,
 table_w_adjP_sig %>% 
   mutate(phenotype = ifelse(grepl("mut_", phenotype), 
                             paste(gsub("mut_", "", phenotype), "mutation"), 
-                            firstup(phenotype))) %>% 
+                            rename_phenotype[phenotype])) %>% 
   mutate(condition_plot = ifelse(comparison == "continuous_linear_relations" |
                                    grepl("MUT", comparison), 
                                  paste0(phenotype), 
@@ -1098,19 +1110,21 @@ table_w_adjP_sig %>%
   # Remove if condition is LOW: 
   filter(sample_sizes_limit != "LOW") %>% 
   mutate(significance = case_when(
-    adj.P.Val < 0.001 ~ "***",
-    adj.P.Val < 0.01  ~ "**",
-    adj.P.Val < 0.05  ~ "*",
+    P.Value < 0.001 ~ "***",
+    P.Value < 0.01  ~ "**",
+    P.Value < 0.05  ~ "*",
     TRUE              ~ "")) %>% 
   ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
   geom_tile() + 
   geom_text(aes(label = significance), color = "black", size = 5) + 
   scale_fill_gradient2(low = "blue4", mid = "white", high = "red4", midpoint = 0) +
   theme_minimal() +
-  theme(axis.text.x = element_text(size = ifelse(c_type == "BRCA", 6, 12), 
+  theme(axis.text.x = element_text(size = ifelse(c_type %in% c("BRCA", "LAML"), 
+                                                 6, 12), 
                                    angle = 30,
                                    vjust = 0.75),
-    axis.text.y = element_text(size = ifelse(c_type == "BRCA", 8, 12)),
+    axis.text.y = element_text(size = ifelse(c_type %in% c("BRCA", "LAML"), 
+                                             8, 12)),
     axis.title = element_blank(),
     title = element_text(size=15)
   ) +
@@ -1139,7 +1153,7 @@ if (length(continuous_sig_phenos) > 0){
     # Find all genes which are significantly expressed in this phenotype
     continuous_sig_genes <- table_w_adjP_sig %>% 
       filter(phenotype == x_pheno,
-             adj.P.Val < 0.05) %>% 
+             P.Value < 0.05) %>% 
       dplyr::select(gene) %>% 
       unique() %>% unlist(use.names = F)
     
@@ -1212,10 +1226,16 @@ if (length(continuous_sig_phenos) > 0){
 <https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html>
 
 ```{r}
+# Define how stringent the lasso regression feature selection should be in the case all phenotypes are shrunk to 0! Be careful not to include too many, since the design_matrix will end up having low rank again then. 
+lasso_min_phenos_to_incl <- 1
+```
+
+```{r}
 # Filter dge to only contain samples that have data for all the significant phenotypes:
 
 # Get significant phenotypes from univariate analysis: 
 sig_phenotypes_univariate <- table_w_adjP_sig %>% 
+  filter(sample_sizes_limit != "LOW") %>% 
   dplyr::select(phenotype) %>% 
   unique() %>% 
   unlist(use.names = F)
@@ -1228,16 +1248,17 @@ is_not_na_pheno <- rowSums(is.na(dge$samples[, sig_phenotypes_univariate])) == 0
 
 # Filter out samples with NA in any of significant phenotypes 
 # SARAH does the same in the survival multivaraite analysis
-dge_filtered <- dge[,is_not_na_pheno,keep.lib.size=FALSE]
+dge_filtered <- dge[,is_not_na_pheno,keep.lib.size=FALSE] 
+#Downstream error in filterByExpr when keep.lib.size=FALSE
 
 # Check which columns in dge_filtered$samples contain only one unique value
-single_value_columns <- sapply(dge_filtered$samples, function(x) length(unique(x)) == 1)
+#single_value_columns <- sapply(dge_filtered$samples, function(x) length(unique(x)) == 1)
 
 # Remove these columns from the samples data
-dge_filtered$samples <- dge_filtered$samples[, !single_value_columns]
+#dge_filtered$samples <- dge_filtered$samples[, !single_value_columns]
 
 # Update list with 
-sig_phenotypes_univariate <- sig_phenotypes_univariate[sig_phenotypes_univariate %in% colnames(dge_filtered$samples)]
+#sig_phenotypes_univariate <- sig_phenotypes_univariate[sig_phenotypes_univariate %in% colnames(dge_filtered$samples)]
 ```
 
 ```{r}
@@ -1259,242 +1280,306 @@ ensure_mut_pairs <- function(phenotype_list) {
 df_cat_sample_size_list <- list()
 was_low_rank <- FALSE
 
-design_mat2 <- model.matrix(as.formula(paste0("~ 0 +", 
-                                              paste(sig_phenotypes_univariate,
-                                                    collapse = " + "))),
-                            data = dge_filtered$samples)
-
-# if two or more of the variables are linear dependent, 
-# rank (qr(design_mat)$rank) < ncol(design_mat)
-# Check if the design matrix has full rank (no multicollinearity issues)
-if (qr(design_mat2)$rank < ncol(design_mat2)) {
-    print("Design matrix is not of full rank. Doing Lasso Regression to remove phenotypes of low importance (coefficient = 0).")
-    # If qr(design_mat2)$rank < ncol(design_mat2) then use lasso or ridge regression to address multicollinearity and variable selection in regression models. 
-  # Lasso can shrink some to 0, while Ridge cannot. 
-  # If you believe that all variables have some contribution, Ridge is more suitable as it shrinks coefficients but does not eliminate them.
-  # You want variable selection: Lasso can shrink some coefficients to zero, making it easier to interpret which variables are significant.
-  
-  
-  # Ensure X is your design matrix
-  X <- as.matrix(dge_filtered$samples[,sig_phenotypes_univariate])  # Design matrix: n_samples x n_features
-  
-  # Remove the contineous phenotypes. 
-  X_categorical <- X[ , !(colnames(X) %in% continuous_sig_phenos)] %>% 
-    as.data.frame() %>% 
-    mutate_if(is.character, as.factor)
-  
-  X_categorical2 <- model.matrix(as.formula(paste0("~ 0 +", 
-                                                   paste(colnames(X_categorical),
-                                                         collapse = " + "))), 
-                    data = X_categorical)
-  
-  # Merge the dummy encoded (X_categorical2) and contineous phenotypes:
-  cont_X <- X[,continuous_sig_phenos] %>% as.data.frame()
-  cat_X <- as.data.frame(X_categorical2)
-  
-  merged_X <- merge(cont_X, cat_X, by = "row.names", all=TRUE) %>% 
-    column_to_rownames("Row.names") %>% 
-    as.matrix()
-  
-  ## NB!! Using only target genes here
-  # Ensure y is your gene expression data in the correct shape
-  y <- t(as.matrix(dge_filtered$counts[target_list,]))  # Expression data: n_samples x n_genes
-  
-  cv_lasso <- cv.glmnet(merged_X, y, alpha = 1, family = "mgaussian")
-  optimal_lambda <- cv_lasso$lambda.min 
-  
-  # Make predictions and coefficients: 
-  lasso_coefficients <- coef(cv_lasso, s = "lambda.min")
-  #predictions <- predict(cv_lasso, s = "lambda.min", newx = merged_X)
-  
-  # Extract important phenotypes (non-zero): 
-  important_phenos <- list()
-  for (t_gene in target_list){
-    
-    tmp_pheno_list <- lasso_coefficients[[t_gene]] %>% 
-      as.matrix() %>% 
-      as.data.frame() %>% 
-      dplyr::rename(coef = 1) %>% 
-      rownames_to_column("phenotype") %>% 
-      filter(coef != 0,
-             phenotype != "(Intercept)") %>% 
-      dplyr::select(phenotype) %>% 
-      unlist(use.names = F)
-    
-    
-    important_phenos <- c(important_phenos, tmp_pheno_list)
-    
-    
-  }
-  
-  important_phenos <- important_phenos %>% unlist() %>% unique()
- 
-  # Make sure it contains but mut_*WT and mut_*MUT : 
-  important_phenos <- unique(ensure_mut_pairs(important_phenos))
-  
-  #Extract phenotypes wihtout category:
-  tmp_index <- list()
-  for (imp_pheno in important_phenos){
-    tmp_index <- c(tmp_index, 
-                   which(stri_detect_fixed(imp_pheno,
-                                           sig_phenotypes_univariate))
-                   )
-  }
-  
-  tmp_index <- tmp_index %>% 
-    unlist() %>% 
-    unique()
-  
-  important_phenos_2 <- sig_phenotypes_univariate[tmp_index]
+if (length(sig_phenotypes_univariate) > 0){
   
   design_mat2 <- model.matrix(as.formula(paste0("~ 0 +", 
-                                              paste(important_phenos_2,
-                                                    collapse = " + "))),
-                            data = dge_filtered$samples)
- 
-  # Keep only the columns (conditions) that are found important by Lasso: 
-  design_mat2 <- design_mat2[,intersect(colnames(design_mat2), important_phenos)]
+                                                paste(sig_phenotypes_univariate,
+                                                      collapse = " + "))),
+                              data = dge_filtered$samples)
   
+  # if two or more of the variables are linear dependent, 
+  # rank (qr(design_mat)$rank) < ncol(design_mat)
+  # Check if the design matrix has full rank (no multicollinearity issues)
   if (qr(design_mat2)$rank < ncol(design_mat2)) {
-    stop("Design matrix is STILL not of full rank after Lasso regression")
-  }
-  
-  was_low_rank <- TRUE
-  
-}
-
-
-### FILTER DATA using the design matrix: 
-# Filter out (more) low count genes, but make sure our target genes are kept: 
-keep <- filterByExpr(dge_filtered, design_mat2)
-keep[target_list] <- TRUE
-
-# Filter dge object to only contain samples from design matrix (NAs removed);
-#dge_filtered <- dge_filtered[keep, rownames(design_mat),keep.lib.size=FALSE]
-dge_filtered <- dge_filtered[keep, ,keep.lib.size=FALSE]
-dge_filtered <- normLibSizes(dge_filtered)
+      print("Design matrix is not of full rank. Doing Lasso Regression to remove phenotypes of low importance (coefficient = 0).")
+      # If qr(design_mat2)$rank < ncol(design_mat2) then use lasso or ridge regression to address multicollinearity and variable selection in regression models. 
+    # Lasso can shrink some to 0, while Ridge cannot. 
+    # If you believe that all variables have some contribution, Ridge is more suitable as it shrinks coefficients but does not eliminate them.
+    # You want variable selection: Lasso can shrink some coefficients to zero, making it easier to interpret which variables are significant.
     
-# Total number of samples included in analysis
-tot_sample_size <- ncol(dge_filtered)
-
-voomData <- voom(dge_filtered, design = design_mat2, plot = F)
-vfit <- lmFit(voomData, design_mat2)
-
-
-# Build the contrasts matrix and include the category sample sizes:
-if (was_low_rank){
-  
-  # Make contrast matrix: 
-  # Build contrast list : 
-  contrastsx <- list()
-  for (x_pheno in important_phenos_2){
-    design_mat_levels <- colnames(design_mat2)[grepl(x_pheno, 
-                                                     colnames(design_mat2))]
-     
-    # Sample size of categories within this phenotype:
-    df_cat_sample_size_list[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
-      summary() %>% 
+    
+    # Ensure X is your design matrix
+    X <- as.matrix(dge_filtered$samples[,sig_phenotypes_univariate])  # Design matrix: n_samples x n_features
+    
+    # Remove the contineous phenotypes. 
+    X_categorical <- X[ , !(colnames(X) %in% continuous_sig_phenos)] %>% 
       as.data.frame() %>% 
-      rownames_to_column("cat") %>% 
-      mutate(phenotype = x_pheno) %>% 
-      dplyr::rename(sample_size = ".")
-
-     if (length(design_mat_levels) > 1){
-       contrastsx <- append(contrastsx,
-                     combn(design_mat_levels, 2,
-                           FUN = function(x){paste0(x[2],
-                                                    "-",
-                                                    x[1])})) %>%
-         unlist()
-      
-     } else {
-       contrastsx <- append(contrastsx, 
-                         design_mat_levels)
-     }
-      
-  }
-
-} else {
-  
-  # IF not a rank problem, just make contrasts matrix for all significant phenotypes: 
-  
-  # Build contrast list : 
-  contrastsx <- list()
-  for (x_pheno in sig_phenotypes_univariate){
+      mutate_if(is.character, as.factor)
     
-    n_total_levels <- length(levels(dge_filtered$samples[[x_pheno]]))
-    all_levels <- paste(x_pheno, levels(dge_filtered$samples[[x_pheno]]), sep = "")
-    design_mat_levels <- colnames(design_mat2)[grepl(x_pheno, colnames(design_mat2))]
+    X_categorical2 <- model.matrix(as.formula(paste0("~ 0 +", 
+                                                     paste(colnames(X_categorical),
+                                                           collapse = " + "))), 
+                      data = X_categorical)
     
-    # Sample size of categories within this phenotype:
-    df_cat_sample_size_list[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
-      summary() %>% 
-      as.data.frame() %>% 
-      rownames_to_column("cat") %>% 
-      mutate(phenotype = x_pheno) %>% 
-      dplyr::rename(sample_size = ".")
+    # Merge the dummy encoded (X_categorical2) and contineous phenotypes:
+    cont_X <- X[,continuous_sig_phenos] %>% as.data.frame()
+    cat_X <- as.data.frame(X_categorical2)
     
-    # If more than one level, compare using combn: 
-    if (length(design_mat_levels) > 1){
-      contrastsx <- append(contrastsx,
-                           combn(design_mat_levels, 2, FUN = function(x){paste0(x[2], "-", x[1])})) %>% 
-        unlist()
+    merged_X <- merge(cont_X, cat_X, by = "row.names", all=TRUE) %>% 
+      column_to_rownames("Row.names") %>% 
+      as.matrix()
+    
+    ## NB!! Using only target genes here
+    # Ensure y is your gene expression data in the correct shape
+    y <- t(as.matrix(dge_filtered$counts[target_list,]))  # Expression data: n_samples x n_genes
+    
+    cv_lasso <- cv.glmnet(merged_X, y, alpha = 1, family = "mgaussian")
+    
+    # See if there is at least 2 non-zero coefficients (one is intercept):
+    nonzero_min_lambda <- cv_lasso$nzero[cv_lasso$lambda == cv_lasso$lambda.min]
+    
+    # If less than 2, use a less stringent lambda allowing more. 
+    if (nonzero_min_lambda < 2){
+      warning(paste("All phenotypes shrink to coef=0 in Lasso Regression. Therefore a less stringent lambda will be used to make coefficients allowing", lasso_min_phenos_to_incl, "phenotypes to be non-zero. "))
       
-      # If baseline not included in design_mat contrasts, add a line for comparing to baseline in contrast mat. 
-      if (n_total_levels > length(design_mat_levels)){
-        for (level_x in all_levels[all_levels %in% design_mat_levels])
-         contrastsx <- append(contrastsx,
-                              level_x)
+       # Find the index of the lambda.min
+      lambda_min_index <- which(cv_lasso$lambda == cv_lasso$lambda.min)
+      
+      # Find the lambda closest to lambda.min with at least lasso_min_phenos_to_incl non-zero coefficients
+      lambda_index <- which(cv_lasso$nzero > lasso_min_phenos_to_incl & cv_lasso$lambda < cv_lasso$lambda[lambda_min_index])[1]
+      
+      # If no lambda satisfies the condition, fall back to lambda.min
+      if (is.na(lambda_index)) {
+          warning(paste("No lambda with at least", lasso_min_phenos_to_incl, "non-zero coefficients found. Using lambda.min."))
+          optimal_lambda <- cv_lasso$lambda.min
+      } else {
+          optimal_lambda <- cv_lasso$lambda[lambda_index]
       }
+
     } else {
-      contrastsx <- append(contrastsx, 
+      optimal_lambda <- cv_lasso$lambda.min 
+    }
+    
+    # Make predictions and coefficients: 
+    lasso_coefficients <- coef(cv_lasso, s = optimal_lambda)
+    #predictions <- predict(cv_lasso, s = "lambda.min", newx = merged_X)
+    
+    # Extract important phenotypes (non-zero): 
+    important_phenos <- list()
+    for (t_gene in target_list){
+      
+      tmp_pheno_list <- lasso_coefficients[[t_gene]] %>% 
+        as.matrix() %>% 
+        as.data.frame() %>% 
+        dplyr::rename(coef = 1) %>% 
+        rownames_to_column("phenotype") %>% 
+        filter(coef != 0,
+               phenotype != "(Intercept)") %>% 
+        dplyr::select(phenotype) %>% 
+        unlist(use.names = F)
+      
+      
+      important_phenos <- c(important_phenos, tmp_pheno_list)
+      
+      
+    }
+    important_phenos <- important_phenos %>% unlist() %>% unique()
+   
+    # Make sure it contains but mut_*WT and mut_*MUT : 
+    important_phenos <- unique(ensure_mut_pairs(important_phenos))
+    
+    #Extract phenotypes wihtout category:
+    tmp_index <- list()
+    for (imp_pheno in important_phenos){
+      tmp_index <- c(tmp_index, 
+                     which(stri_detect_fixed(imp_pheno,
+                                             sig_phenotypes_univariate))
+                     )
+    }
+    
+    tmp_index <- tmp_index %>% 
+      unlist() %>% 
+      unique()
+    
+    important_phenos_2 <- sig_phenotypes_univariate[tmp_index]
+    
+    if (!length(important_phenos_2) == 0){
+      design_mat2 <- model.matrix(as.formula(paste0("~ 0 +", 
+                                                paste(important_phenos_2,
+                                                      collapse = " + "))),
+                                data = dge_filtered$samples)
+     
+      
+      
+       # If only one important phenotype subcategory, the design matrix must be "wrangled" to the right format: 
+      if (length(important_phenos) == 1){
+        design_mat2 <- design_mat2[,intersect(colnames(design_mat2), 
+                                              important_phenos)] %>% 
+          as.matrix()
+        
+        colnames(design_mat2) <- important_phenos
+        
+      } else {
+        # Keep only the columns (conditions) that are found important by Lasso: 
+        design_mat2 <- design_mat2[,intersect(colnames(design_mat2), 
+                                              important_phenos)]
+      }
+      
+      
+      
+      if (qr(design_mat2)$rank < ncol(matrix(design_mat2))) {
+        stop("Design matrix is STILL not of full rank after Lasso regression")
+      }
+      
+      was_low_rank <- TRUE
+      
+     
+    } else  {
+      
+      stop("No phenotypes have non-zero coefficients after doing Lasso Regression.")
+      
+    }
+    
+    
+  }
+  
+  
+  ### FILTER DATA using the design matrix: 
+  # Filter out (more) low count genes, but make sure our target genes are kept: 
+  keep <- filterByExpr(dge_filtered, design = design_mat2)
+  keep[target_list] <- TRUE
+  
+  # Filter dge object to only contain samples from design matrix (NAs removed);
+  #dge_filtered <- dge_filtered[keep, rownames(design_mat),keep.lib.size=FALSE]
+  dge_filtered <- dge_filtered[keep, ,keep.lib.size=FALSE]
+  dge_filtered <- normLibSizes(dge_filtered)
+      
+  # Total number of samples included in analysis
+  tot_sample_size <- ncol(dge_filtered)
+  
+  voomData <- voom(dge_filtered, design = design_mat2, plot = F)
+  vfit <- lmFit(voomData, design_mat2)
+  
+  
+  # Build the contrasts matrix and include the category sample sizes:
+  if (was_low_rank){
+    
+    # Make contrast matrix: 
+    # Build contrast list : 
+    contrastsx <- list()
+    for (x_pheno in important_phenos_2){
+      design_mat_levels <- colnames(design_mat2)[grepl(x_pheno, 
+                                                       colnames(design_mat2))]
+       
+      # Sample size of categories within this phenotype:
+      df_cat_sample_size_list[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
+        summary() %>% 
+        as.data.frame() %>% 
+        rownames_to_column("cat") %>% 
+        mutate(phenotype = x_pheno) %>% 
+        dplyr::rename(sample_size = ".")
+  
+       if (length(design_mat_levels) > 1){
+         contrastsx <- append(contrastsx,
+                       combn(design_mat_levels, 2,
+                             FUN = function(x){paste0(x[2],
+                                                      "-",
+                                                      x[1])})) %>%
+           unlist()
+        
+       } else {
+         contrastsx <- append(contrastsx, 
                            design_mat_levels)
+       }
+        
     }
   
-  }
-}
-
-
-# Sample size of categories within this phenotype:
-df_cat_sample_size <- df_cat_sample_size_list %>% 
-  bind_rows()
-
-# Build contrasts matrix: 
-prestr = "makeContrasts("
-poststr = ",levels=design_mat2)"
-
-astr = paste(contrastsx, collapse=", ")
-commandstr <- paste0(prestr, astr, poststr)
-contrasts_mat <- eval(parse(text=commandstr))
-
-
-# Fit contrasts matrix to fit
-cvfit <- contrasts.fit(vfit, contrasts = contrasts_mat)
-
-# Do not use trend=TRUE when I use voom. 
-# https://support.bioconductor.org/p/98201
-# ChatGPT suggest using voom for RNAseq data. 
-efit <- eBayes(cvfit, trend = FALSE)
-
-multivariate_comparison <- list()
-multivariate_results <- list()
-
-if (length(colnames(contrasts_mat))>1){
-      for (c in colnames(contrasts_mat)){
-        multivariate_comparison[[c]] <- topTreat(efit, 
-                  adjust.method = "fdr",
-                  number = Inf,
-                 coef = c) %>% 
-            rownames_to_column("gene") %>% 
-            filter(!str_detect(gene, "^ENSG")) %>% 
-            mutate(comparison = c,
-                   total_sample_size = tot_sample_size)
-      }
-      multivariate_results <- multivariate_comparison %>% 
-        bind_rows()
+  } else {
+    
+    # IF not a rank problem, just make contrasts matrix for all significant phenotypes: 
+    
+    # Build contrast list : 
+    contrastsx <- list()
+    for (x_pheno in sig_phenotypes_univariate){
       
+      n_total_levels <- length(levels(dge_filtered$samples[[x_pheno]]))
+      all_levels <- paste(x_pheno, levels(dge_filtered$samples[[x_pheno]]), sep = "")
+      design_mat_levels <- colnames(design_mat2)[grepl(x_pheno, colnames(design_mat2))]
+      
+      # Sample size of categories within this phenotype:
+      df_cat_sample_size_list[[x_pheno]] <- dge_filtered$samples[[x_pheno]] %>% 
+        summary() %>% 
+        as.data.frame() %>% 
+        rownames_to_column("cat") %>% 
+        mutate(phenotype = x_pheno) %>% 
+        dplyr::rename(sample_size = ".")
+      
+      # If more than one level, compare using combn: 
+      if (length(design_mat_levels) > 1){
+        contrastsx <- append(contrastsx,
+                             combn(design_mat_levels, 2, FUN = function(x){paste0(x[2], "-", x[1])})) %>% 
+          unlist()
+        
+        # If baseline not included in design_mat contrasts, add a line for comparing to baseline in contrast mat. 
+        if (n_total_levels > length(design_mat_levels)){
+          for (level_x in all_levels[all_levels %in% design_mat_levels])
+           contrastsx <- append(contrastsx,
+                                level_x)
+        }
+      } else {
+        contrastsx <- append(contrastsx, 
+                             design_mat_levels)
+      }
+    
+    }
+  }
+  
+  
+  # Sample size of categories within this phenotype:
+  df_cat_sample_size <- df_cat_sample_size_list %>% 
+    bind_rows()
+  
+  # Build contrasts matrix: 
+  prestr = "makeContrasts("
+  poststr = ",levels=design_mat2)"
+  
+  astr = paste(contrastsx, collapse=", ")
+  commandstr <- paste0(prestr, astr, poststr)
+  contrasts_mat <- eval(parse(text=commandstr))
+  
+  
+  # Fit contrasts matrix to fit
+  cvfit <- contrasts.fit(vfit, contrasts = contrasts_mat)
+  
+  # Do not use trend=TRUE when I use voom. 
+  # https://support.bioconductor.org/p/98201
+  # ChatGPT suggest using voom for RNAseq data. 
+  efit <- eBayes(cvfit, trend = FALSE)
+  
+  multivariate_comparison <- list()
+  multivariate_results <- list()
+  
+  if (length(colnames(contrasts_mat))>1){
+        for (c in colnames(contrasts_mat)){
+          multivariate_comparison[[c]] <- topTreat(efit, 
+                    adjust.method = "fdr",
+                    number = Inf,
+                   coef = c) %>% 
+              rownames_to_column("gene") %>% 
+              filter(!str_detect(gene, "^ENSG")) %>% 
+              mutate(comparison = c,
+                     total_sample_size = tot_sample_size)
+        }
+        multivariate_results <- multivariate_comparison %>% 
+          bind_rows()
+        
+  } else if (length(colnames(contrasts_mat))==1) {
+    multivariate_results <- topTreat(efit, 
+                    adjust.method = "fdr",
+                    number = Inf, 
+                    coef = colnames(contrasts_mat)) %>% 
+              rownames_to_column("gene") %>% 
+              filter(!str_detect(gene, "^ENSG")) %>% 
+              mutate(comparison = colnames(contrasts_mat),
+                     total_sample_size = tot_sample_size)
+    
+  }
+  multivariate_results
+  
+} else {
+  warning("No significant phenotypes with enough samples in subtypes")
 }
-multivariate_results
+
 ```
 
 ### Wrangling
@@ -1520,15 +1605,17 @@ get_phenotype_samplestr <- function(comparison, df, min_sam_size = min_sample_si
     dplyr::select(sample_size) %>% 
     unlist(use.names = F)
   
+  subgroup_list <- levels(dge_filtered$samples[[x_phenotype]])
+  
   # If comparison only has one. 
   if (length(str_list_2) < 2){
-    scnd_cat <- levels(dge_filtered$samples[[x_phenotype]])[1]
+    scnd_cat <- subgroup_list[subgroup_list != str_list_2]
     
     scnd_samplesize <- df %>% 
       filter(phenotype == x_phenotype,
-             cat == scnd_cat) %>% 
+             cat %in% scnd_cat) %>% 
       dplyr::select(sample_size) %>% 
-      unlist(use.names = F)
+      sum()
     
   } else {
     scnd_samplesize <- df %>% 
@@ -1564,6 +1651,10 @@ multivariate_results <- multivariate_results %>%
          cat_sample_size = get_phenotype_samplestr(comparison, 
                                                    df_cat_sample_size)[2],
          sample_sizes_limit = get_phenotype_samplestr(comparison, df_cat_sample_size)[3])  
+
+comparison <- important_phenos
+df <- df_cat_sample_size
+
 ```
 
 ```{r}
@@ -1589,16 +1680,16 @@ multivariate_results_2 <- multivariate_results_2 %>%
   ) %>%
   ungroup()
 
-# Table with conditions with at least one gene is significant after mutliple adjusting (adjusted P value)
+# Table with conditions with at least one gene is significant:
 multivariate_w_adjP_sig <- multivariate_results_2 %>% 
   unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>% 
   group_by(condition) %>% 
-  filter(any(adj.P.Val < 0.05)) %>% 
+  filter(any(P.Value < 0.05)) %>% 
   ungroup()
 
 multivariate_w_adjP_sig
 
-# List of phenotypes significant (adjusted P value) in multivariate analysis
+# List of phenotypes significant in multivariate analysis
 sig_phenotypes_multivariate <- multivariate_w_adjP_sig %>% 
   dplyr::select(phenotype) %>% 
   unique() %>% 
@@ -1652,7 +1743,7 @@ if (length(sig_phenotypes_multivariate)>0){
   p <- multivariate_w_adjP_sig %>%  
     mutate(phenotype = ifelse(grepl("mut_", phenotype), 
                               paste(gsub("mut_", "", phenotype), "mutation"), 
-                              firstup(phenotype))) %>% 
+                              rename_phenotype[phenotype])) %>% 
     mutate(condition_plot = ifelse(comparison == "continuous_linear_relations" |
                                      grepl("MUT", comparison), 
                                    paste0(phenotype), 
@@ -1664,16 +1755,16 @@ if (length(sig_phenotypes_multivariate)>0){
     # Remove if condition is LOW: 
     filter(sample_sizes_limit != "LOW") %>% 
     mutate(significance = case_when(
-      adj.P.Val < 0.001 ~ "***",
-      adj.P.Val < 0.01  ~ "**",
-      adj.P.Val < 0.05  ~ "*",
+      P.Value < 0.001 ~ "***",
+      P.Value < 0.01  ~ "**",
+      P.Value < 0.05  ~ "*",
       TRUE              ~ "")) %>% 
     # Remove if condition is LOW: 
     filter(sample_sizes_limit != "LOW") %>% 
     mutate(significance = case_when(
-      adj.P.Val < 0.001 ~ "***",
-      adj.P.Val < 0.01  ~ "**",
-      adj.P.Val < 0.05  ~ "*",
+      P.Value < 0.001 ~ "***",
+      P.Value < 0.01  ~ "**",
+      P.Value < 0.05  ~ "*",
       TRUE              ~ "")) %>% 
     ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
     geom_tile() + 
@@ -1812,11 +1903,11 @@ tpm_target_data_longs <- tpm_target_data_longs %>%
 
 # Make table with only significant genes!
 df_sig_genes_multivariate <- multivariate_w_adjP_sig %>% 
-  filter(adj.P.Val < 0.05) %>%  
+  filter(P.Value < 0.05) %>%  
   mutate(test = "multivariate")
 
 df_sig_genes_univariate <- table_w_adjP_sig %>% 
-  filter(adj.P.Val < 0.05) %>% 
+  filter(P.Value < 0.05) %>% 
   mutate(test = "univariate")
 
 sig_genes_both <- df_sig_genes_multivariate %>% 
@@ -1920,1016 +2011,4 @@ for (x_pheno in sig_phenotypes_univariate){
 
 
 
-```
-
-## 
-
-## OLD
-
-`{r} # Make table with number of individuals in e ach category df_number_of_individuals_phenotype_long <- df_pheno_of_interst %>%   mutate(across(everything(), as.character)) %>%    pivot_longer(cols = everything(), names_to = "Phenotype", values_to = "Category") %>%   group_by(Phenotype, Category) %>%   summarise(Count = n(), .groups = 'drop') %>%   arrange(Phenotype)   df_number_of_individuals_phenotype_wide <- df_pheno_of_interst %>%   mutate(across(everything(), as.character)) %>%    pivot_longer(cols = everything(), names_to = "Phenotype", values_to = "Category") %>%   group_by(Phenotype, Category) %>%   summarise(Count = n(), .groups = 'drop') %>%   arrange(Phenotype) %>%    group_by(Phenotype) %>%    reframe(Sample_distribution = paste0(Category, ": ", Count)) %>%      group_by(Phenotype) %>%    summarise(Sample_distribution_2 = paste(Sample_distribution, collapse = ", "))}`
-
-`{r} # Function to get sample distribution from df_number_of_individuals_phenotype_long into results table with significant genes.  get_sample_dist <- function(pheno, analysis, low_limit, check_low = FALSE) {      if(analysis != "continuous_linear_relations"){     # Split the analysis string to get the two categories     categories <- unlist(strsplit(analysis, "_vs_"))          # Get counts for each category from count_data     counts <- df_number_of_individuals_phenotype_long %>%       mutate(Category = ifelse(!is.na(Category), make.names(Category), Category)) %>%        filter(Phenotype == pheno) %>%        filter(Category %in% categories) %>%       summarise(sample_dist = paste0(Category, ":", Count, collapse = ", "))           if (check_low) {       # Extract the counts for the categories       category_counts <- df_number_of_individuals_phenotype_long %>%         filter(Phenotype == pheno) %>%         filter(Category %in% categories) %>%         filter(!is.na(Category)) %>%          pull(Count)                       # If any count is less than low_limit, set sample_dist to "LOW"       if (any(category_counts < low_limit)) {         return("LOW")       }     }          return(counts$sample_dist)   } else {     return(NA)   } }  pheno <- "age_at_initial_pathologic_diagnosis" analysis <- "continuous_linear_relations"}`
-
-```{r}
-
-for (x_pheno in phenos_to_test){
-  print(x_pheno)
-  rm(design_mat, contrasts_mat)
-  
-  # Empty list to save topTreat for each comparison: 
-  list_comparisons <- list()
-   
-  ### MAKE DESIGN AND CONTRAST MATRIX ##
-  options(na.action='na.omit') # DO not include if only NAs
-  design_mat <- model.matrix(as.formula(paste0("~0 + ", x_pheno)), 
-                     data = dge$samples)
-  
-  # Make colnames of design matrix match rownames in contrast_mat: 
-  new_colnames <- sub(paste0("^", x_pheno), "", colnames(design_mat))
-  # Add X in front like the make_all_contrasts if numeric: 
-  colnames(design_mat) <- ifelse(grepl("^[0-9.]+$", new_colnames), paste0("X", new_colnames), new_colnames)
-
-  # Make contrast matrix: 
-  contrasts_mat <- make_all_contrasts(dge$samples[[x_pheno]])
-  
-  # Filter out (more) low count genes, but make sure our target genes are kept: 
-  keep <- filterByExpr(dge, design_mat)
-  keep[target_list] <- TRUE
-  
-  # Filter dge object to only contain samples from design matrix (NAs removed);
-  dge_filtered <- dge[keep,rownames(design_mat),keep.lib.size=FALSE]
-  dge_filtered <- normLibSizes(dge_filtered)
-  
-  
-  # VOOM TRANSFORMATION: 
-  # Get the sample names from the design matrix and dge object
-  # Filter the dge object to keep only the common samples
-  
-  voomData <- voom(dge_filtered, design = design_mat, plot = F)
-  
-  vfit <- lmFit(voomData, design_mat)
-  
-  vfit <- contrasts.fit(vfit, contrast=contrasts_mat)
-  
-  # Do not use trend=TRUE when I use voom. https://support.bioconductor.org/p/98201
-  # ChatGPT suggest using voom for RNAseq data. 
-  efit <- eBayes(vfit, trend = FALSE)
-  
-    
-  ## FIND SIGNIFICANTLY EXPRESSED GENES ##
-  # Find out what genes are the significantly up/down regulated:
-  #dt <- decideTests(efit, adjust.method = "fdr")
-  #df_dt <- dt %>% as.data.frame %>% rownames_to_column("gene")
-  
-  # What rows have at least one non-zero (= 1=significant)
-  #de_common <- which(rowSums(df_dt == 0) < ncol(df_dt)-1 )
-  
-  #results <- efit$coefficients %>% 
-  #  as.data.frame() %>% 
-  #  rownames_to_column("gene") %>% 
-  #  slice(de_common) %>%
-  #  filter(!str_detect(gene, "^ENSG")) # Any of our target genes here?
-  
-  # Loop all comparisons to get topTreat table for all for later plotting
-  if (length(colnames(contrasts_mat)>1)){
-    for (c in colnames(contrasts_mat)){
-      list_comparisons[[c]] <- topTreat(efit, 
-                adjust.method = "fdr",
-                number = Inf,
-               coef = c) %>% 
-          rownames_to_column("gene") %>% 
-          filter(!str_detect(gene, "^ENSG")) %>% 
-          mutate(phenotype = x_pheno,
-                 comparison = c)
-    }
-    list_df_logFC_pval[[x_pheno]] <- list_comparisons %>% 
-      bind_rows()
-    
-  } else {
-      
-    # Save table with logFC and p values: 
-    list_df_logFC_pval[[x_pheno]] <- topTreat(efit, 
-            adjust.method = "fdr",
-            number = Inf) %>% 
-      rownames_to_column("gene") %>% 
-      filter(!str_detect(gene, "^ENSG")) %>% 
-      mutate(phenotype = x_pheno, 
-            comparison = colnames(contrasts_mat))
-  }
-  
-  
-  # Save efit to list: 
-  #list_efit[[x_pheno]] <- efit
-   
-  # If no significant genes, add None for the pheno: 
-  #if (nrow(results) < 1){
-  #  table_results <- table_results %>% 
-  #  add_row(phenotype = x_pheno,
-  #          analysis = x_pheno, 
-  #          genes_sig_up = "None", 
-  #          genes_sig_down = "None")
-  #} else {
-  #  
-  #  for (i in 2:ncol(results)){
-  #    
-  #  up_genes <- results[which(results[,i] > 0), 1]
-  #  if(length(up_genes)<1){
-  #    up_genes <- "None"
-  #  }
-    
-  #  down_genes <- results[which(results[,i] < 0), 1]
-  #  if(length(down_genes)<1){
-  #    down_genes <- "None"
-  #  }
-    
-  #  table_results <- table_results %>% 
-  #    add_row(phenotype = x_pheno,
-  #            analysis = colnames(results)[i], 
-  #            genes_sig_up = paste(up_genes, collapse = ", "), 
-  #            genes_sig_down = paste(down_genes, collapse = ", "))
-  #  }
-    
-  #}
-  
-}
-
-
-
-```
-
-```{r}
-# Make list (table) of phenotypes with No significant genes
-df_non_significant_phenotypes <- table_results %>% 
-  filter(genes_sig_up=="None" & genes_sig_down=="None") %>% 
-  dplyr::select(phenotype) %>% 
-  dplyr::rename(Nonsignificant_phenotype = phenotype)
-
-
-# FILTER OUT ANALYSIS WITH <10 IN ONE OF THE CATEGORIES. 
-# Make table with the phenotypes with significant genes;
-# I am also filtering out the analysis which has at least one category < 10 samples
-sig_genes_results <- table_results %>% 
-  filter(genes_sig_up!="None" | genes_sig_down!="None") 
-
-sig_genes_results_above_10 <- sig_genes_results %>% 
-  mutate(sample_dist = mapply(get_sample_dist, phenotype, analysis, check_low = T)) %>% 
-  filter(sample_dist != "LOW")
-
-# Get list of low analysises: 
-LOW_sig_condition <- sig_genes_results %>% 
-  mutate(sample_dist = mapply(get_sample_dist, phenotype, analysis, check_low = T)) %>% 
-  filter(sample_dist == "LOW") %>% 
-  unite(condition, c(phenotype, analysis), sep = "_") %>% 
-  dplyr::select(condition) %>% 
-  unlist(use.names = F)
-
-# Phenotypes sorted out because of categories with <10 samples: 
-list_sig_phenotypes <- sig_genes_results["phenotype"] %>% 
-  unlist(use.names = F) %>% unique()
-list_sig_above10_phenotypes <- sig_genes_results_above_10["phenotype"] %>% 
-  unlist(use.names = F) %>% unique()
-list_sig_phenotypes[!(list_sig_phenotypes %in% list_sig_above10_phenotypes)]
-```
-
-##### TABLES:
-
-```{r}
-sig_genes_results_above_10[1,"analysis"] <- "Pancreas_Adenocarcinoma_Ductal_Type_vs\nPancreas_Adenocarcinoma_Other_Subtype"
-  
-sig_genes_results_above_10 %>% 
-  kable("html", caption = "Sample Distribution by Phenotype and Analysis") %>%
-  kable_styling(full_width = F, position = "center")
-
-df_non_significant_phenotypes %>% 
-  summarise(Nonsignificant_phenotype = paste(Nonsignificant_phenotype, 
-                                             collapse = ", ")) %>% 
-  kable() %>%
-  kable_styling(full_width = F, position = "center")
-
-
-sig_genes_results_above_10 %>% 
-  dplyr::select(phenotype) %>% 
-  unique() %>% 
-  summarise(Significant_phenotype = paste(phenotype, 
-                                             collapse = ", ")) %>% 
-  kable() %>%
-  kable_styling(full_width = F, position = "center")
-
-```
-
-```{r}
-# Make plots. Show logFC and p values (and adjusted p values). 
-# Question: The significant expressed genes, are they significant in adjusted p value or just "normal" pvalue ? 
-
-list_efit_sig$histological_type %>%  names()
-
-list_efit_sig$histological_type$coefficients %>% 
-  as.data.frame()
-
-topTreat(list_efit_sig$histological_type, 
-        adjust.method = "fdr",
-        number = Inf) %>% 
-  rownames_to_column("gene") %>% 
-  filter(!str_detect(gene, "^ENSG")) # Find our target genes 
-  
-
-
-list_df_logFC_pval %>% 
-  bind_rows() %>%  
-  unite(condition, c(phenotype, comparison), sep = "_", remove = FALSE) %>% 
-  mutate(LOW_sig = ifelse(condition %in% LOW_sig_condition, TRUE, FALSE)) %>% 
-  group_by(condition) %>% 
-  filter(any(adj.P.Val < 0.05)) %>% 
-  mutate(significance = case_when(
-    P.Value < 0.001 ~ "ooo",
-    P.Value < 0.01  ~ "oo",
-    P.Value > 0.05  ~ "o",
-    TRUE              ~ "")) %>% 
-  mutate(significance = case_when(
-    adj.P.Val < 0.001 ~ "***",
-    adj.P.Val < 0.01  ~ "**",
-    adj.P.Val < 0.05  ~ "*",
-    TRUE              ~ significance)) %>% 
-  # If LOW sample (<10) in any of two groups, make parenthesis to show
-  mutate(significance = case_when(
-    adj.P.Val < 0.001 & LOW_sig  ~ "(***)",
-    adj.P.Val < 0.01 & LOW_sig  ~ "(**)",
-    adj.P.Val < 0.05 & LOW_sig  ~ "(*)",
-    TRUE              ~ significance)) %>% 
-  ggplot(aes(x = gene, y = condition, fill = logFC)) +
-  geom_tile() + 
-  geom_text(aes(label = significance), color = "black", size = 5) + 
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  theme_minimal()
-
-# Next: Make sure this one agrees with the table (Is the table based on regular pvalues or the adj p values?)
-####### Find a way to mark the significant by normal P value
-
-# Make plot with starring the adj p values significant genes (add information of low ) ALSO marking P val (regular) significant and if LOW. 
-# Make another plot with normal P value also mariking low, marking significance with stars. AND mark the adj P val sig (If any in between)
-
-```
-
-```{r}
-# Intercept: For Factors it doesnt matter. But for continuous values such as age, you will get a better fit with intercept ! https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html 
-
-pheno_of_int <- phenos_to_test[1] 
-
-#dge$samples[[pheno_of_int]] %>% unique()
-
-#if (continuous){
-  # If continuous value, use intercept:
-#design_mat <- model.matrix(as.formula(paste0("~", pheno_of_int)), data = dge$samples)
-  
-#  head(design_mat)
-#} else {
-#options(na.action='na.omit') # DO not include if only NAs
-#design_mat <- model.matrix(as.formula(paste0("~0 + ", pheno_of_int)), 
-#                           data = dge$samples)
-
-
-design_mat <- setup_design_contrasts(pheno_of_int = pheno_of_int,
-                                     return_table = "design")
-contrasts_mat <- setup_design_contrasts(pheno_of_int = pheno_of_int,
-                                     return_table = "contrast")
-
-# Filter out (more) low count genes, but make sure our target genes are kept: 
-keep <- filterByExpr(dge, design_mat)
-keep[target_list] <- TRUE
-
-dge_filtered <- dge[keep,rownames(design_mat),keep.lib.size=FALSE]
-dge_filtered <- normLibSizes(dge_filtered)
-
-# VOOM TRANSFORMATION: 
-# Filter dge object to only contain samples from design matrix (NAs removed);
-# Get the sample names from the design matrix and dge object
-# Filter the dge object to keep only the common samples
-#dge_filtered <- dge[, rownames(design_mat)]
-
-par(mfrow=c(1,2))
-
-voomData <- voom(dge_filtered, design = design_mat, plot = F)
-
-vfit <- lmFit(voomData, design_mat)
-
-vfit <- contrasts.fit(vfit, contrast=contrasts_mat)
-
-# use trend=TRUE because I have RNA-seq data with mean-variance trend (ChatGPT)
-efit <- eBayes(vfit, trend = TRUE) 
-#plotSA(efit, main = "Final model: mean-variance trend")
-```
-
-```{r}
-# This shows the significantly up- and down-regulated genes. Significance is by default defined using an adjusted p-value cutoff at 5%. 
-summary(decideTests(efit, adjust.method = "fdr"))
-
-# To use a more strict definitaion than just the adjusted p-value, one can require log-fold-changes (log-FCs) to be above a minimum value. Here the treat() function is used. This function calculates p-values from empirical Bayes moderated t-statistics with a minimum log-FC requirement. From what I understood from Lars, we are not very interested in the log-FC cutoff. 
-tfit <- treat(vfit, lfc=1)
-summary(decideTests(tfit, adjust.method = "fdr"))
-```
-
-```{r}
-# Find out what genes are the significantly up/down regulated:
-dt <- decideTests(efit, adjust.method = "fdr")
-df_dt <- dt %>% as.data.frame %>% rownames_to_column("gene")
-
-de_common <- which(df_dt[,1]!=0 & df_dt[,2]!=0)
-
-results <- efit$coefficients %>% 
-  as.data.frame() %>% 
-  rownames_to_column("gene") %>% 
-  slice(de_common) %>%
-  filter(!str_detect(gene, "^ENSG")) # Any of our target genes here?
-
-#efit$coefficients["ARG1",]
-
-results
-```
-
-```{r}
-# For multiple categories with genes sig up or down regulated, add the categories to the table: 
-for (i in 2:ncol(results)){
-    
-  up_genes <- results[which(results[,i] > 0), 1]
-  
-  down_genes <- results[which(results[,i] < 0), 1]
-  
-  table_results <- table_results %>% 
-    add_row(phenotype = colnames(results)[i], 
-            genes_sig_up = paste(up_genes, collapse = ", "), 
-            genes_sig_down = paste(down_genes, collapse = ", "))
-}
-```
-
-```{r}
-
-table_results <- table_results %>% 
-  add_row(phenotype = pheno_of_int, 
-          genes_sig_up = "None", 
-          genes_sig_down = "None")
-
-table_results 
-
-# NB!!! For "frequency_of_alcohol_consumption", I only compare a consumption of 7 (max) to all the rest. 
-```
-
-```{r}
-
-pheno_of_int <- phenos_to_test[16] 
-
-options(na.action='na.omit') # DO not include if only NAs
-design_mat <- model.matrix(as.formula(paste0("~0 + ", pheno_of_int)), 
-                           data = dge$samples)
-
-head(design_mat)
-  
-
-#   colnames(design_mat)
-#}
-   
-# Only compare two of the categories: 
-contrasts_mat <- makeContrasts(
-  levels = colnames(design_mat),
-  contrast = paste0(colnames(design_mat)[1], " - ", colnames(design_mat)[2]) 
-)
-colnames(contrasts_mat) <- pheno_of_int
-
-
-
-
-# Filter out (more) low count genes, but make sure our target genes are kept: 
-keep <- filterByExpr(dge, design_mat)
-keep[target_list] <- TRUE
-
-dge_filtered <- dge[keep,rownames(design_mat),keep.lib.size=FALSE]
-dge_filtered <- normLibSizes(dge_filtered)
-
-# VOOM TRANSFORMATION: 
-# Filter dge object to only contain samples from design matrix (NAs removed);
-# Get the sample names from the design matrix and dge object
-# Filter the dge object to keep only the common samples
-#dge_filtered <- dge[, rownames(design_mat)]
-
-par(mfrow=c(1,2))
-
-voomData <- voom(dge_filtered, design = design_mat, plot = T)
-
-vfit <- lmFit(voomData, design_mat)
-
-#if (!continuous){
-  # Only for factors: If contrast matrix is made.
-vfit <- contrasts.fit(vfit, contrast=contrasts_mat)
-#}
-
-# use trend=TRUE because I have RNA-seq data with mean-variance trend (ChatGPT)
-efit <- eBayes(vfit, trend = TRUE) 
-plotSA(efit, main = "Final model: mean-variance trend")
-```
-
-#### Automated phenotype analysis
-
-```{r}
-# List of top 10 mutations in this c_type: 
-mut_list <- dge$samples %>% 
-  colnames() %>% 
-  .[str_detect(., "mut_")]
-
-# CREATE DESIGN AND CONTRAST MATRICES
-# Loop through all phenotypes and create design and contrast matrices
-mut_matrices <- list() 
-allDEresults <- list()
-
-for (mut in mut_list) {
-  print(mut)
-  # CREATE DESIGN AND CONTRAST MATRICES
-  # Design matrix
-  design_mat <- model.matrix(as.formula(paste0("~0 + ", mut)), data = dge$samples)
-  
-  # Contrast matrix
-  contrasts_mat <- makeContrasts(
-    levels = colnames(design_mat),
-    contrast = paste0(mut, "MUT - ", mut, "WT") # parse(contrast_formula)
-  )
-  colnames(contrasts_mat) <- mut
-   
-  # VOOM TRANSFORMATION: 
-  # Filter dge object to only contain samples from design matrix (NAs removed);
-  # Get the sample names from the design matrix and dge object
-  # Filter the dge object to keep only the common samples
-  dge_filtered <- dge[, rownames(design_mat)]
-  
-  voomData <- voom(dge_filtered, design = design_mat, plot = FALSE)
-  
-  mut_matrices[[mut]] <- list(design = design_mat, contrast = contrasts_mat)
-  
-  fit <- lmFit(voomData, design_mat) %>%
-    contrasts.fit(contrasts_mat) %>%
-    treat() #lfc = 1 (default = 0.2630344)
-  
-  allDEresults[[mut]] <- topTreat(fit, 
-                           coef = mut, 
-                           number = Inf, 
-                           adjust.method = "fdr") %>%
-    as.data.frame() %>% 
-  # Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05.     and absolute log2 fold change is greater than 1. 
-    dplyr::mutate(isSignificant = case_when(
-      adj.P.Val < 0.05 ~ TRUE, # & abs(logFC) > 1
-      TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
-    )) %>% 
-    rownames_to_column("sample") %>% 
-    filter(!str_detect(sample, "ENSG")) # Keep only our target genes
-}
-
-# Example: access the design and contrast matrices for the first phenotype
-mut_matrices[[2]]$design
-mut_matrices[[2]]$contrast
-
-allDEresults %>% 
-  bind_rows(.id = "mut") %>% 
-  arrange(adj.P.Val)
-```
-
-```{r}
-dge %>% 
-  cpm(log = TRUE) %>%
-  as.data.frame %>%
-  rownames_to_column("gene") %>%
-  dplyr::filter(gene %in% c("LGALS3", "BIRC7", "SIGLEC15")) %>%
-  melt() %>%
-  dplyr::rename(sample = variable,
-         logCPM = value) %>% 
-  left_join(dge$samples, by = "sample") %>% 
-  ggplot(aes(x=gene, y = logCPM, fill = mut_TP53)) +
-  geom_boxplot()
-
-
-```
-
-```{r}
-## Phenotypes: 
-
-# Age, smoking, radiation therapy, etc.
-median_age <- median( dge$samples$age_at_initial_pathologic_diagnosis )
-
-# Add Age category for limma analysis
-dge$samples <- dge$samples %>% 
-  mutate(age_category = ifelse(age_at_initial_pathologic_diagnosis >= median_age, "older", "younger"),
-         radiation_therapy = ifelse(radiation_therapy == "[Discrepancy]", "Discrepancy", radiation_therapy))
-
-
-#dge$samples$tobacco_smoking_history
-
-# tobacco_smoking_history
-# history_of_diabetes
-
-test_phenotypes <- c("age_category", "radiation_therapy")
-
-for (i in 1:length(test_phenotypes)){
-  pheno_x <- test_phenotypes[i]
-  
-  print(i)
-  print (pheno_x)
-  
-  design_mat <- model.matrix(as.formula(paste0("~0 + ", test_phenotypes[i])), data = dge$samples)
-    
-  two_categories <- dge$samples %>% 
-    dplyr::select(test_phenotypes[i]) %>% 
-    unique() %>% 
-    unlist(use.names = F)
-  
-  
-  if (length(two_categories) > 2) { # Remove NA and dicrepancy from list of categories. 
-    two_categories <- two_categories[!is.na(two_categories)]
-    two_categories <- two_categories[two_categories != "[Discrepancy]"]
-  }
-  
-  contrast_formula <-  paste0(test_phenotypes[i], two_categories[2], "-" , test_phenotypes[i], two_categories[1])
-  
-  # Contrast matrix
-  contrasts_mat <- makeContrasts(
-    levels = colnames(design_mat),
-    contrast = contrast_formula # parse(contrast_formula)
-  )
-  colnames(contrasts_mat) <- test_phenotypes[i]
-   
-  # VOOM TRANSFORMATION: 
-  # Filter dge object to only contain samples from design matrix (NAs removed);
-  # Get the sample names from the design matrix and dge object
-  # Filter the dge object to keep only the common samples
-  dge_filtered <- dge[, rownames(design_mat)]
-  
-  voomData <- voom(dge_filtered, design = design_mat, plot = FALSE)
-  
-  fit <- lmFit(voomData, design_mat) %>%
-    contrasts.fit(contrasts_mat) %>%
-    treat() #lfc = 1 (default = 0.2630344)
-  
-  allDEresults[[pheno_x]] <- topTreat(fit,
-                                                 coef = test_phenotypes[i], #"age_category", 
-                                                 number = Inf, 
-                                                 adjust.method = "fdr") %>%
-    as.data.frame() %>% 
-  # Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05.     and absolute log2 fold change is greater than 1. 
-    dplyr::mutate(isSignificant = case_when(
-      adj.P.Val < 0.05 ~ TRUE, # & abs(logFC) > 1
-      TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
-    )) %>% 
-    rownames_to_column("sample") %>% 
-    filter(!str_detect(sample, "ENSG")) # Keep only our target genes
-}
-
-
-
-allDEresults
-
-print("HE")
-
-```
-
-#### Specify Design Matrix
-
-```{r}
-# pathologic_stage
-# Choosing here e.g. vital_status as group. 
-dge$samples$mut_KRAS %>%  length()
-
-#options(na.action='na.omit') # ignore NAs (default)
-design_mat <- model.matrix(~0 + mut_KRAS, data=dge$samples)
-
-# Remove some of the columns (discrepancy or no data)
-#design_mat <- design_mat %>% 
-#  as.data.frame() %>% 
-#  select(mut_TP53NO, mut_TP53YES) %>% 
-#  #filter_all(any_vars(.!=0)) %>% 
-#  as.matrix()
-  
-```
-
-#### Apply voom transformation
-
-Voom transformation will transform the discrete counts of gene count data into log2-counts per million (logCPM). This also estimates the mean-variance relationship and uses this to compute appropriate observation-level weights (genes), while taking into account differences in library sizes between samples.
-
-This step makes the data ready for linear modelling.
-
-```{r}
-# Filter dge object to only contain samples from design matrix (NAs removed);
-# Get the sample names from the design matrix and dge object
-design_samples <- rownames(design_mat)
-# Filter the dge object to keep only the common samples
-dge_filtered <- dge[, design_samples]
-
-
-voomData <- voom(dge_filtered, design = design_mat, plot = TRUE)
-```
-
-We want it to be without low standard variations. Look at <https://stats.stackexchange.com/questions/160255/voom-mean-variance-trend-plot-how-to-interpret-the-plot> for reference.
-
-#### Define Comparison (Contrast) of Interest
-
-Here we define the contrast matrix, which contains the pairwise comparisons which we wish to test.
-
-```{r}
-design_mat_colnames <- colnames(design_mat)
-
-contrasts_mat <- makeContrasts(
-  levels = colnames(design_mat),
-  mut_KRAS = mut_KRASMUT - mut_KRASWT
-)
-contrasts_mat
-```
-
-#### Fit a linear model for each gene
-
-Now a linear model is fitted for each gene using the voomData logCPM for each gene, the design matrix and the contrast matrix.
-
-`treat` applies Bayesian statistics to "borrow" information across the indiviual moderated t-test for each gene. This will increase the power to detect differentially expressed genes.
-
-In the code here below we define a log2-fold change greater than 1 to be determining if a gene is differentially expressed.
-
-```{r}
-fit <- lmFit(voomData, design_mat) %>%
-  contrasts.fit(contrasts_mat) %>%
-  treat(lfc = 1) #lfc = 1 (default = 0.2630344)
-```
-
-#### Identifying differentially expressed genes
-
-We will have to correct for multiple testing. A detail about multiple testing corrections can be found here: <https://physiology.med.cornell.edu/people/banfelder/qbio/resources_2008/1.5_GenespringMTC.pdf>.
-
-Here we use false discovery rate (FDR) method for correction. And set the significance cutoff at 0.05. This means that only genes with FDR-adjusted p-values \< 0.05 AND absolute log2 fold change of 1 or above will be considered significantly differentially expressed.
-
-```{r}
-results <- decideTests(fit, 
-                       p.value = 0.05,#1,#0.5,
-                       adjust.method = "fdr") 
-
-results %>% 
-  summary()
-```
-
-#### Results
-
-In order to extract out the differentially expressed genes, we use the `topTreat` function from limma. Each row is a gene and columns contain information about p-value, fdr-adjusted p-value (ajd.P.Val), t-statistic (t), log2 fold change (logFC) and more.
-
-```{r}
-allDEresults <- topTreat(fit, 
-                         coef = "mut_KRAS", 
-                         number = Inf, 
-                         adjust.method = "fdr") %>%
-  as.data.frame() 
-
-# Filtering the result table to only contain the significantly differentially expressed, meaning the adjusted p-value < 0.05. and absolute log2 fold change is greater than 1. 
-allDEresults <- allDEresults %>%
-  dplyr::mutate(isSignificant = case_when(
-    adj.P.Val < 0.05 & abs(logFC) > 1 ~ TRUE, 
-    TRUE ~ FALSE # If conditions in the line above are not met, gene is not DE. 
-  )) %>% 
-  rownames_to_column("sample") %>% 
-  filter(!str_detect(sample, "ENSG")) # Keep only our target genes
-
-sigDEresults <- allDEresults %>%
-  dplyr::filter(isSignificant == TRUE)
-
-
-allDEresults 
-sigDEresults
-```
-
-#### Volcano plot
-
-I will skip this, because it makes no sense when I only use 14 genes.
-
-#### Boxplot
-
-Looking at the expression of
-
-```{r}
-expressionOf_genes <- dge %>% 
-  cpm(log = TRUE) %>%
-  as.data.frame %>%
-  rownames_to_column("gene") %>%
-  #dplyr::filter(gene == "CD177") %>%
-  melt() %>%
-  dplyr::rename(sample = variable,
-         logCPM = value) %>% 
-  left_join(dge$samples, by = "sample")
-s
-expressionOf_genes
-
-expressionOf_genes %>% 
-  ggplot(aes(x=gene, y = logCPM, fill = mut_KRAS)) +
-  geom_boxplot()
-
-```
-
-### Linear regression LIMMA
-
-```{r}
-# Loop through all the interesting phenotypes to find significantly differentially expressed target genes in the different conditions: 
-
-# Table with results of what of our targets genes are sig up or down expr in different phenotypes. 
-table_results <- tibble(phenotype = character(),
-                        genes_sig_up = character(), 
-                        genes_sig_down = character())
-
-phenos_to_test <- df_pheno_of_interst %>% colnames()
-
-for (x_pheno in phenos_to_test){
-  print(x_pheno)
-  rm(design_mat, contrasts_mat)
-   
-  ### MAKE DESIGN AND CONTRAST MATRIX ##
-  options(na.action='na.omit') # DO not include if only NAs
-  design_mat <- model.matrix(as.formula(paste0("~0 + ", x_pheno)), 
-                     data = dge$samples)
-  
-  categories <- dge$samples[[x_pheno]] %>% unique()
-  categories <- categories[!is.na(categories)]
-  
-  ### CONTRAST MATRICES: ###
-  if (x_pheno == "alcoholic_exposure_category"){
-    contrasts_mat <- makeContrasts(
-      Daily_vs_OccasionalSocial = "alcoholic_exposure_categoryDaily_Drinker - alcoholic_exposure_categoryOccasional_or_Social_Drinker",
-      OccasionalSocial_vs_None = "alcoholic_exposure_categoryOccasional_or_Social_Drinker - alcoholic_exposure_categoryNone",
-      Weekly_vs_OccasionalSocial = "alcoholic_exposure_categoryWeekly_Drinker - alcoholic_exposure_categoryOccasional_or_Social_Drinker",
-      
-      Daily_vs_None = "alcoholic_exposure_categoryDaily_Drinker - alcoholic_exposure_categoryNone",
-      Daily_vs_Weekly = "alcoholic_exposure_categoryDaily_Drinker - alcoholic_exposure_categoryWeekly_Drinker",
-      Weekly_vs_None = "alcoholic_exposure_categoryWeekly_Drinker - alcoholic_exposure_categoryNone",
-      
-      levels = design_mat  # Ensure this refers to your design matrix
-    )
-  }
-  
-  
-  if (x_pheno == "histological_type"){
-    contrasts_mat <- makeContrasts(
-      AdenoDuctal_vs_Other = "histological_typePancreas_Adenocarcinoma_Ductal_Type - histological_typePancreas_Adenocarcinoma_Other_Subtype",
-      AdenoDuctal_vs_Colloid = "histological_typePancreas_Adenocarcinoma_Ductal_Type - histological_typePancreas_Colloid_mucinous_non_cystic_Carcinoma",
-      AdenoDuctal_vs_Undifferentiated = "histological_typePancreas_Adenocarcinoma_Ductal_Type - histological_typePancreas_Undifferentiated_Carcinoma",
-      
-      Other_vs_Colloid = "histological_typePancreas_Adenocarcinoma_Other_Subtype - histological_typePancreas_Colloid_mucinous_non_cystic_Carcinoma",
-      Other_vs_Undifferentiated = "histological_typePancreas_Adenocarcinoma_Other_Subtype - histological_typePancreas_Undifferentiated_Carcinoma",
-      
-      Colloid_vs_Undifferentiated = "histological_typePancreas_Colloid_mucinous_non_cystic_Carcinoma - histological_typePancreas_Undifferentiated_Carcinoma",
-      
-      levels = design_mat  # Make sure this matches your design matrix
-    )
-  }
-  
-  if (x_pheno == "neoplasm_histologic_grade"){
-    contrasts_mat <- makeContrasts(
-      G2_vs_G1 = "neoplasm_histologic_gradeG2 - neoplasm_histologic_gradeG1",
-      G3G4GX_vs_G1 = "neoplasm_histologic_gradeG3_G4_GX - neoplasm_histologic_gradeG1",
-      G3G4GX_vs_G2 = "neoplasm_histologic_gradeG3_G4_GX - neoplasm_histologic_gradeG2",
-      levels = design_mat
-    )
-  }
-  
-  if (x_pheno == "pathologic_stage"){
-    contrasts_mat <- makeContrasts(
-      StageII_vs_StageI = "pathologic_stageStage_II - pathologic_stageStage_I",
-      StageIII_IV_vs_StageI = "pathologic_stageStage_III_IV - pathologic_stageStage_I",
-      StageIII_IV_vs_StageII = "pathologic_stageStage_III_IV - pathologic_stageStage_II",
-      levels = design_mat
-    )
-  }
-  
-  if (x_pheno == "tobacco_smoking_history"){
-    contrasts_mat <- makeContrasts(
-      Current_vs_NonSmoker = "tobacco_smoking_historyCurrent_smoker - tobacco_smoking_historyLifelong_NonSmoker",
-      Former_na_vs_NonSmoker = "tobacco_smoking_historyFormer_smoker_duration_na - tobacco_smoking_historyLifelong_NonSmoker",
-      Former_less_than_15y_vs_NonSmoker = "tobacco_smoking_historyFormer_smoker_less_than_15y - tobacco_smoking_historyLifelong_NonSmoker",
-      Former_more_than_15y_vs_NonSmoker = "tobacco_smoking_historyFormer_smoker_more_than_15y - tobacco_smoking_historyLifelong_NonSmoker",
-      
-      Current_vs_Former_na = "tobacco_smoking_historyCurrent_smoker - tobacco_smoking_historyFormer_smoker_duration_na",
-      Current_vs_Former_less_than_15y = "tobacco_smoking_historyCurrent_smoker - tobacco_smoking_historyFormer_smoker_less_than_15y",
-      Current_vs_Former_more_than_15y = "tobacco_smoking_historyCurrent_smoker - tobacco_smoking_historyFormer_smoker_more_than_15y",
-      
-      Former_less_than_15y_vs_Former_more_than_15y = "tobacco_smoking_historyFormer_smoker_less_than_15y - tobacco_smoking_historyFormer_smoker_more_than_15y",
-      Former_na_vs_Former_more_than_15y = "tobacco_smoking_historyFormer_smoker_duration_na - tobacco_smoking_historyFormer_smoker_more_than_15y",
-      
-      levels = design_mat
-    )
-  }
-  
-  # Only compare two of the categories: 
-  if(length(categories) < 3 & categories[1] == "MUT"){
-    contrasts_mat <- makeContrasts(
-      levels = colnames(design_mat),
-      contrast = paste0(colnames(design_mat)[2], " - ", colnames(design_mat)[1]) 
-    )
-    colnames(contrasts_mat) <- x_pheno
-  } else if (length(categories) < 3){
-    contrasts_mat <- makeContrasts(
-      levels = colnames(design_mat),
-      contrast = paste0(colnames(design_mat)[1], " - ", colnames(design_mat)[2]) 
-    )
-    colnames(contrasts_mat) <- x_pheno
-  }
-  
-  
-  
-  # Filter out (more) low count genes, but make sure our target genes are kept: 
-  keep <- filterByExpr(dge, design_mat)
-  keep[target_list] <- TRUE
-  
-  dge_filtered <- dge[keep,rownames(design_mat),keep.lib.size=FALSE]
-  dge_filtered <- normLibSizes(dge_filtered)
-  
-  
-  # VOOM TRANSFORMATION: 
-  # Filter dge object to only contain samples from design matrix (NAs removed);
-  # Get the sample names from the design matrix and dge object
-  # Filter the dge object to keep only the common samples
-  
-  voomData <- voom(dge_filtered, design = design_mat, plot = F)
-  
-  vfit <- lmFit(voomData, design_mat)
-  
-  vfit <- contrasts.fit(vfit, contrast=contrasts_mat)
-  
-  # use trend=TRUE because I have RNA-seq data with mean-variance trend (ChatGPT)
-  efit <- eBayes(vfit, trend = TRUE)
-  
-    
-  ## FIND SIGNIFICANTLY EXPRESSED GENES ##
-  # Find out what genes are the significantly up/down regulated:
-  dt <- decideTests(efit, adjust.method = "fdr")
-  df_dt <- dt %>% as.data.frame %>% rownames_to_column("gene")
-  
-  de_common <- which(df_dt[,1]!=0 & df_dt[,2]!=0)
-  
-  results <- efit$coefficients %>% 
-    as.data.frame() %>% 
-    rownames_to_column("gene") %>% 
-    slice(de_common) %>%
-    filter(!str_detect(gene, "^ENSG")) # Any of our target genes here?
-  
-   
-  # If no significant genes, add None for the pheno: 
-  if (nrow(results) < 1){
-    table_results <- table_results %>% 
-    add_row(phenotype = x_pheno, 
-            genes_sig_up = "None", 
-            genes_sig_down = "None")
-  } else {
-    
-    for (i in 2:ncol(results)){
-      
-    up_genes <- results[which(results[,i] > 0), 1]
-    
-    down_genes <- results[which(results[,i] < 0), 1]
-    
-    table_results <- table_results %>% 
-      add_row(phenotype = colnames(results)[i], 
-              genes_sig_up = paste(up_genes, collapse = ", "), 
-              genes_sig_down = paste(down_genes, collapse = ", "))
-    }
-  }
-  
-   
-}
-```
-
-### Gene expression data
-
-```{r}
-### OLD WAY OF LOADING IN DATA: Only containing genes of interest !
-
-# Read expected counts
-if (!exists("df_expected_count")){
-  df_expected_count <- read_tsv(paste0(file_path_xenadata, "TCGA_pancan_expected_count_goi.tsv"), 
-                                show_col_types = FALSE) %>% 
-    mutate(across(-c(sample), function(x) 2^x)) # Reverse log2
-}
-
-# Filter samples out which are not in phenotype data
-df_expected_count <- df_expected_count %>% 
-  dplyr::select(sample, intersect(df_pheno$sample, colnames(df_expected_count)))
-
-# Change gene IDs to gene names: 
-geneName_ensg <- read_csv("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/targets_ensg.csv")
-geneName_ensg <- geneName_ensg %>% 
-  dplyr::rename(gene_ensg_shrt = converted_alias) %>% 
-  dplyr::select(name, gene_ensg_shrt)
-
-df_expected_count <- df_expected_count %>% 
-  mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-  select(-sample) %>% 
-  relocate(gene_ensg_shrt) %>% 
-  left_join(geneName_ensg, by = "gene_ensg_shrt") %>%
-  dplyr::rename(sample = name) %>% 
-  relocate(sample) %>% 
-  select(-gene_ensg_shrt)
-
-mat_exp_count <-  df_expected_count %>% 
-  column_to_rownames("sample") %>% 
-  as.matrix()
-```
-
-```{r}
-# Gene expression TPM data: 
-
-if (load_tpm){
-  # Load data: 
-  if (!exists("df_data")){
-    df_data <- read.csv(paste0(file_path_xenadata, file_name_geneexp), sep = "\t")
-  }
-  
-  # Change format of colnames to have "-" instead of ".":
-  colnames(df_data) <- gsub("\\.", "-", colnames(df_data))
-  
-  # Part into sub df with solid tumors, laml and skcm. 
-  flat_sample_id_solidtumor <- intersect(list(unlist(flatten(sample_id_solidtumor), use.names = FALSE))[[1]], colnames(df_data))
-  flat_sample_id_laml <- intersect(list(unlist(sample_id_laml_skcm[["LAML"]], use.names = FALSE))[[1]], colnames(df_data))
-  
-  df_solidtumor <- df_data %>% 
-    dplyr::select(sample, all_of(flat_sample_id_solidtumor)) %>% 
-    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-    relocate(sample, gene_ensg_shrt)
-  
-  df_laml <- df_data %>% 
-    dplyr::select(sample, all_of(flat_sample_id_laml)) %>% 
-    mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-    relocate(sample, gene_ensg_shrt)
-  
-  
-  df_skcm <- list()
-  
-  for (skcm_type in names(sample_id_laml_skcm[-1])){
-    
-    flat_sample_id_skcm <- intersect(unlist(sample_id_laml_skcm[[skcm_type]], use.names = FALSE), colnames(df_data))
-    
-    df_skcm[[skcm_type]] <- df_data %>% 
-      dplyr::select(sample, all_of(flat_sample_id_skcm)) %>% 
-      mutate(gene_ensg_shrt = gsub("\\..*", "", sample)) %>% 
-      relocate(sample, gene_ensg_shrt)
-  }
-}
-
-```
-
-## Limma analysis
-
-```{r}
-# Looks like cpm and fpkm are better instead of TPM. Loading norm count PANCAN data:
-### NB!!! I will might need to use FPKM instead, not sure if norm count is the same as CPM.. For now, I will just use this norm count data to build the quarto.
-
-# https://bioconductor.org/packages/release/workflows/vignettes/RNAseq123/inst/doc/designmatrices.html
-
-if (!exists("df_norm_data")){
-  df_norm_data <- list()
-  
-  for (c_type in cancer_abbr_list){
-    file_name <- paste0(file_path_xenadata, 
-                        "/TCGA_", 
-                        c_type, 
-                        "_gene_expression_RNAseq_pancan_normalized.tsv")
-    if(file.exists(file_name)){
-      df_norm_data[[c_type]] <- read.csv(file_name, 
-                                       sep = "\t")
-    } else {
-      warning(paste0("File not found: ", file_name))
-    }
-  }
-}
-
-```
-
-```{r}
-df_norm_ctype_data <- df_norm_data[[c_type]] %>% 
-  filter(sample %in% target_list) 
-
-df_norm_ctype_data_cpm <- df_norm_ctype_data %>% 
-  mutate(across(-c(sample), function(x) 2^x)) %>% 
-  column_to_rownames("sample") %>% 
-  as.matrix() %>% 
-  cpm(log = TRUE)
-
-df_norm_ctype_data_cpm %>% 
-  lmFit() %>% 
-  eBayes(trend=TRUE)
-```
-
-## TCGA data
-
-```{r}
-library(TCGAbiolinks)
-library(SummarizedExperiment)
-```
-
-```{r}
-tcga_data_list <- list()
-
-sample_type <- "Primary Tumor"
-
-project_name <- paste0("TCGA-", c_type)
-query <- GDCquery(project = project_name,
-                  data.category = "Transcriptome Profiling",
-                  data.type = "Gene Expression Quantification",
-                  workflow.type = "STAR - Counts", 
-                  sample.type = sample_type)
-
-tcga_data_list[[c_type]] <- GDCdownload(query)
 ```
