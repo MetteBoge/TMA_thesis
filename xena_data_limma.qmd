@@ -2,6 +2,13 @@
 title: "xena_data_limma"
 format: html
 editor: visual
+
+output:
+  pdf_document:
+    latex_engine: xelatex
+    extra_dependencies: ["fontspec"]
+header-includes:
+  - \usepackage{amsmath}  # Required for math symbols like $\geq$
 ---
 
 ```{r}
@@ -41,6 +48,7 @@ library(car)
 library(glmnet)
 library(stringi)
 library(viridis)
+library(Cairo)
 
 library(rmarkdown)
 ```
@@ -1044,9 +1052,6 @@ is_all_numeric <- function(x) {
 }
 
 
-group <- dge_filtered$samples[[x_pheno]] %>% 
-  unique() %>% 
-  make.names() %>% sort
 ```
 
 ```{r}
@@ -1246,35 +1251,64 @@ test_if_exceeds_min_sample_size <- function(sample_size_string,
 use_bigger_smaller_signs <- function(input_str) {
   # Function to convert phrases to comparison symbols
   convert_phrase <- function(phrase) {
+    
+    suffix <- sub(".*:(\\d+)$", "\\1", phrase)
+    phrase <- sub(":\\d+$", "", phrase)
+    
     # Handle "less_than"
     if (grepl("less_than_(\\d+)", phrase)) {
       num <- as.numeric(sub("less_than_(\\d+)", "\\1", phrase))
-      return(paste0("<", num))
-    }
-    # Handle "more_than"
-    if (grepl("more_than_or_eq_(\\d+)", phrase)) {
+      res <- paste0("<", num)
+      # Handle "more_than"
+    } else if (grepl("more_than_or_eq_(\\d+)", phrase)) {
       num <- as.numeric(sub("more_than_or_eq_(\\d+)", "\\1", phrase))
-      return(paste0("≥", num))
-    }
-    # Handle "between_x_incl._and_y_excl."
-    if (grepl("between_(\\d+)_.incl._and_(\\d+)_.excl.", phrase)) {
+      res <- paste0("≥", num)
+      # Handle "between_x_incl._and_y_excl."
+    } else if (grepl("between_(\\d+)_.incl._and_(\\d+)_.excl.", phrase)) {
       nums <- as.numeric(unlist(regmatches(phrase, gregexpr("\\d+", phrase))))
-      return(paste0(nums[1], "-", nums[2]-1))
+      res <- paste0(nums[1], "-", nums[2]-1)
+    } else {
+      res <- phrase
     }
 
+    # Add the suffix back if it was present
+    if (suffix != phrase) {
+        res <- paste0(res, ":", suffix)
+    }
+
+    
     # If no match is found, return the original phrase
-    return(phrase)
+    return(res)
   }
   
-  # Split input string into parts using "_vs_" as a delimiter
-  parts <- strsplit(input_str, "_vs_")[[1]]
-  
-  # Convert each part and join them with " vs " separator
-  converted_parts <- sapply(parts, convert_phrase)
-  return(paste(converted_parts, collapse = " vs "))
+  if (grepl("_vs_", input_str)){
+    # Split input string into parts using "_vs_" as a delimiter
+    parts <- strsplit(input_str, "_vs_")[[1]]
+    
+    # Convert each part and join them with " vs " separator
+    converted_parts <- sapply(parts, convert_phrase)
+    return(paste(converted_parts, collapse = " vs "))
+  } else if (grepl(", ", input_str)){
+    # Strip out numeric suffixes like ':5' or ':8'
+    phrase <- sub(":\\d+$", "", phrase)
+    
+    parts <- strsplit(input_str, ", ")[[1]]
+    
+    # Convert each part and join them with " vs " separator
+    converted_parts <- sapply(parts, convert_phrase)
+    return(paste(converted_parts, collapse = ", "))
+  }
+
 }
 
-use_bigger_smaller_signs
+
+####
+# Function making first letter capital: 
+firstup <- function(x) {
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  x
+}
+
 ```
 
 ```{r}
@@ -1299,24 +1333,6 @@ table_w_adjP_sig <- full_table_w_low %>%
 
 ```{r}
 
-# Function making first letter capital: 
-firstup <- function(x) {
-  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
-  x
-}
-
-
-pdf(file = ifelse(c_type == "SKCM",
-                  paste0(path_save_plots, 
-                  "heatmap_univariate_phenotypes_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
-                  ".pdf"),
-                  paste0(path_save_plots, 
-                  "heatmap_univariate_phenotypes_",
-                  c_type, 
-                  ".pdf")), 
-    paper = "a4r",
-    height = 15, width = 16)
 
 # Plot with correct y-axis coloring
 # Change the names for the plot: 
@@ -1325,8 +1341,6 @@ table_w_adjP_sig %>%
   mutate(phenotype = ifelse(grepl("mut_", phenotype), 
                               paste(gsub("mut_", "", phenotype), "mutation"), 
                               rename_phenotype[phenotype])) %>% 
-    mutate(phenotype = gsub("age_at_initial_pathologic_diagnosis", 
-                             "Age at Diagnosis", phenotype)) %>% 
   rowwise() %>% 
   # Change age to use symbols: 
   mutate(comparison = ifelse(phenotype == "Age at Diagnosis" | 
@@ -1367,26 +1381,21 @@ table_w_adjP_sig %>%
                  paste0("Limma univariate analysis of ", c_type))) +
   coord_fixed() # Make sure tiles are square
 
-# Get the max value of logFC and min value for plotting the result in multivariate:
+ggsave(filename = ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, 
+                  "heatmap_univariate_phenotypes_",
+                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  ".pdf"),
+                  paste0(path_save_plots, 
+                  "heatmap_univariate_phenotypes_",
+                  c_type, 
+                  ".pdf")),
+       device = cairo_pdf)
 
-
-dev.off()
 
 
 
 ## Heat map for cell fractions: 
-
-pdf(file = ifelse(c_type == "SKCM",
-                  paste0(path_save_plots, 
-                  "heatmap_univariate_cellfrac_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
-                  ".pdf"),
-                  paste0(path_save_plots, 
-                  "heatmap_univariate_cellfrac_",
-                  c_type, 
-                  ".pdf")), 
-    paper = "a4r",
-    height = 15, width = 16)
 
 # Plot with correct y-axis coloring
 # Change the names for the plot: 
@@ -1428,10 +1437,17 @@ table_w_adjP_sig %>%
                  paste0("Limma univariate analysis of ", c_type))) +
   coord_fixed() # Make sure tiles are square
 
-# Get the max value of logFC and min value for plotting the result in multivariate:
+ggsave(filename = ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, 
+                  "heatmap_univariate_cellfrac_",
+                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  ".pdf"),
+                  paste0(path_save_plots, 
+                  "heatmap_univariate_cellfrac_",
+                  c_type, 
+                  ".pdf")),
+       device = cairo_pdf)
 
-
-dev.off()
 ```
 
 ##### LINEAR PLOT OF continuous PHENOTYPE
@@ -2025,25 +2041,11 @@ if (exists("lasso_coefficients")){
 
 if (length(sig_phenotypes_multivariate)>0){
     
-  pdf(file = ifelse(c_type == "SKCM",
-                  paste0(path_save_plots, 
-                  "heatmap_multivariate_phenotypes_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
-                  ".pdf"),
-                  paste0(path_save_plots, 
-                  "heatmap_multivariate_",
-                  c_type, 
-                  ".pdf")), 
-      paper = "a4r",
-      height = 15, width = 16)
-
   p <- multivariate_w_adjP_sig %>%  
     filter(!grepl("cellfrac", phenotype)) %>% 
     mutate(phenotype = ifelse(grepl("mut_", phenotype), 
                               paste(gsub("mut_", "", phenotype), "mutation"), 
                               rename_phenotype[phenotype])) %>% 
-    mutate(phenotype = gsub("age_at_initial_pathologic_diagnosis", 
-                             "Age at Diagnosis", phenotype)) %>% 
     rowwise() %>% 
     # Change age to use symbols: 
     mutate(comparison = ifelse(phenotype == "Age at Diagnosis" | 
@@ -2067,13 +2069,13 @@ if (length(sig_phenotypes_multivariate)>0){
       TRUE              ~ "")) %>% 
     ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
     geom_tile() + 
-    geom_text(aes(label = significance), color = "black", size = 5) + 
+    geom_text(aes(label = significance), color = "black", size = 3) + 
     scale_fill_gradient2(low = "blue4", mid = "white", high = "red4", midpoint = 0) +
     theme_minimal() +
-    theme(axis.text.x = element_text(size = 12, 
+    theme(axis.text.x = element_text(size = 8, 
                                      angle = 30,
                                      vjust = 0.75),
-      axis.text.y = element_text(size = 12),
+      axis.text.y = element_text(size = 8),
       axis.title = element_blank(),
       title = element_text(size=15)
     ) +
@@ -2085,24 +2087,21 @@ if (length(sig_phenotypes_multivariate)>0){
     
   print(p)
   
-  dev.off()
+  ggsave(filename = ifelse(c_type == "SKCM",
+                paste0(path_save_plots, 
+                "heatmap_multivariate_phenotypes_",
+                c_type, "_", gsub("SKCM_", "",sub_ctype),
+                ".pdf"),
+                paste0(path_save_plots, 
+                "heatmap_multivariate_",
+                c_type, 
+                ".pdf")),
+     device = cairo_pdf)
+
   
   
   
   ## FOr the cell fractions: 
-  pdf(file = ifelse(c_type == "SKCM",
-                  paste0(path_save_plots, 
-                  "heatmap_multivariate_cellfrac_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
-                  ".pdf"),
-                  paste0(path_save_plots, 
-                  "heatmap_multivariate_cellfrac_",
-                  c_type, 
-                  ".pdf")), 
-      paper = "a4r",
-      height = 15, width = 16)
-  
-  
   p <- multivariate_w_adjP_sig %>%  
     filter(grepl("cellfrac", phenotype),
          !grepl("uncharacterized", phenotype)) %>% 
@@ -2125,13 +2124,13 @@ if (length(sig_phenotypes_multivariate)>0){
       TRUE              ~ "")) %>% 
     ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
     geom_tile() + 
-    geom_text(aes(label = significance), color = "black", size = 5) + 
+    geom_text(aes(label = significance), color = "black", size = 3) + 
     scale_fill_gradient2(low = "blue4", mid = "white", high = "red4", midpoint = 0) +
     theme_minimal() +
-    theme(axis.text.x = element_text(size = 12, 
+    theme(axis.text.x = element_text(size = 8, 
                                      angle = 30,
                                      vjust = 0.75),
-      axis.text.y = element_text(size = 12),
+      axis.text.y = element_text(size = 8),
       axis.title = element_blank(),
       title = element_text(size=15)
     ) +
@@ -2143,7 +2142,16 @@ if (length(sig_phenotypes_multivariate)>0){
     
   print(p)
   
-  dev.off()
+  ggsave(filename = ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, 
+                  "heatmap_multivariate_cellfrac_",
+                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  ".pdf"),
+                  paste0(path_save_plots, 
+                  "heatmap_multivariate_cellfrac_",
+                  c_type, 
+                  ".pdf")), 
+         device = cairo_pdf)
 }
 
 ```
@@ -2156,16 +2164,31 @@ if (length(sig_phenotypes_multivariate)>0){
 if (length(sig_phenotypes_multivariate)>0){
       
   multivariate_sample_size_table <- multivariate_w_adjP_sig %>% 
+    filter(sample_sizes_limit != "LOW") %>% 
+    mutate(phenotype = ifelse(grepl("mut_", phenotype), 
+                              paste(gsub("mut_", "", phenotype), 
+                                    "mutation"), 
+                              ifelse(grepl("cellfrac", phenotype) ,
+                                     phenotype, 
+                                     rename_phenotype[phenotype]))) %>% 
+    mutate(phenotype = gsub("cellfrac_", "", phenotype)) %>% 
+    mutate(phenotype = gsub("\\.\\.\\.", " - ", phenotype)) %>% 
+    mutate(phenotype = gsub("\\.", " ", phenotype)) %>% 
+    mutate(phenotype = gsub("Tregs", "", phenotype)) %>%
+    rowwise() %>% 
+    # Change age to use symbols: 
+    mutate(cat_sample_size = ifelse(phenotype == "Age at Diagnosis" | 
+                                 grepl("breslow", str_to_lower(phenotype)),
+                               use_bigger_smaller_signs(cat_sample_size),
+                               cat_sample_size)) %>% 
+    mutate(cat_sample_size = gsub("≥", ">=", cat_sample_size)) %>% 
     dplyr::select(phenotype, cat_sample_size, total_sample_size) %>% 
     group_by(phenotype, total_sample_size) %>%
     summarise(
       cat_sample_size = paste(unique(unlist(strsplit(cat_sample_size, ", "))), collapse = ", ")
     ) %>% 
     mutate(cat_sample_size = gsub(":", ": ", cat_sample_size)) %>% 
-    unique() %>% 
-    mutate(phenotype = ifelse(grepl("mut_", phenotype), 
-                              paste(gsub("mut_", "", phenotype), "mutation"),
-                              firstup(gsub("_", " ", phenotype))))
+    unique()
   
   # Change colnames of the table: 
   new_colnames <- multivariate_sample_size_table %>% 
@@ -2175,35 +2198,59 @@ if (length(sig_phenotypes_multivariate)>0){
     gsub("Cat", "Subgroup", .)
    
   colnames(multivariate_sample_size_table) <- new_colnames 
-    
+   
   # Make pretty table
   multivariate_sample_size_table %>% 
     kable(caption = paste("Sample sizes for limma multivariate analysis of", c_type)) %>%   
     kable_styling(full_width = F, position = "center", fixed_thead = T) %>%
     column_spec(1:ncol(multivariate_sample_size_table), width = "5cm") 
-  
     
   table<-kable(multivariate_sample_size_table, format="markdown")
+  
+  table_file_name <- ifelse(c_type == "SKCM",
+                            paste0(path_save_plots,
+                                   "multivariate_sample_size_table_", 
+                                   c_type, "_", sub_ctype, ".pdf"),
+                            paste0(path_save_plots,
+                                   "multivariate_sample_size_table_", 
+                                   c_type, ".pdf"))
+  
   cat(table, sep="\n", 
-      file=paste0(path_save_plots, "multivariate_sample_size_table_", c_type, ".pdf"))
-  render(paste0(path_save_plots, "multivariate_sample_size_table_", c_type, ".pdf"),
-         output_format = "pdf_document")
+      file=table_file_name)
+  render(table_file_name,
+         output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+
   
 }
 
 
 ####
 univariate_sample_size_table <- table_w_adjP_sig %>% 
+  filter(sample_sizes_limit != "LOW") %>% 
+  mutate(phenotype = ifelse(grepl("mut_", phenotype), 
+                            paste(gsub("mut_", "", phenotype), 
+                                  "mutation"), 
+                            ifelse(grepl("cellfrac", phenotype) ,
+                                   phenotype, 
+                                   rename_phenotype[phenotype]))) %>% 
+  mutate(phenotype = gsub("cellfrac_", "", phenotype)) %>% 
+  mutate(phenotype = gsub("\\.\\.\\.", " - ", phenotype)) %>% 
+  mutate(phenotype = gsub("\\.", " ", phenotype)) %>% 
+  mutate(phenotype = gsub("Tregs", "", phenotype)) %>%
+  rowwise() %>% 
+  # Change age to use symbols: 
+  mutate(cat_sample_size = ifelse(phenotype == "Age at Diagnosis" | 
+                               grepl("breslow", str_to_lower(phenotype)),
+                             use_bigger_smaller_signs(cat_sample_size),
+                             cat_sample_size)) %>% 
+  mutate(cat_sample_size = gsub("≥", ">=", cat_sample_size)) %>% 
   dplyr::select(phenotype, cat_sample_size, total_sample_size) %>% 
   group_by(phenotype, total_sample_size) %>%
   summarise(
     cat_sample_size = paste(unique(unlist(strsplit(cat_sample_size, ", "))), collapse = ", ")
   ) %>% 
   mutate(cat_sample_size = gsub(":", ": ", cat_sample_size)) %>% 
-  unique() %>% 
-  mutate(phenotype = ifelse(grepl("mut_", phenotype), 
-                            paste(gsub("mut_", "", phenotype), "mutation"),
-                            firstup(gsub("_", " ", phenotype))))
+  unique() 
 
 # Change colnames of the table: 
 new_colnames <- univariate_sample_size_table %>% 
@@ -2221,11 +2268,19 @@ univariate_sample_size_table %>%
   column_spec(1:ncol(univariate_sample_size_table), width = "5cm") 
 
 
+table_file_name <- ifelse(c_type == "SKCM", 
+              paste0(path_save_plots, 
+                     "univariate_sample_size_table_", 
+                     c_type, "_", sub_ctype, ".pdf"),
+              paste0(path_save_plots, 
+                     "univariate_sample_size_table_", 
+                     c_type, ".pdf"))
+
 table<-kable(univariate_sample_size_table, format="markdown")
 cat(table, sep="\n", 
-    file=paste0(path_save_plots, "univariate_sample_size_table_", c_type, ".pdf"))
-render(paste0(path_save_plots, "univariate_sample_size_table_", c_type, ".pdf"),
-       output_format = "pdf_document")
+    file=table_file_name)
+render(table_file_name,
+       output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
 
 ```
 
@@ -2276,8 +2331,9 @@ sig_genes_both <- df_sig_genes_multivariate %>%
 
 
 # looping all significant phenotypes for plotting: 
+sig_pheno_2 <- sig_phenotypes_univariate[!sig_phenotypes_univariate %in% colnames(df_cellfrac)]
 
-for (x_pheno in sig_phenotypes_univariate){
+for (x_pheno in sig_pheno_2){
   
   if (!x_pheno %in% continuous_sig_phenos){
     # If the gene is significant for multivariate, denote it: 
