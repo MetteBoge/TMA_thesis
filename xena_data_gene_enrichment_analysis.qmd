@@ -1,0 +1,31 @@
+---
+title: "xena_data_gene_enrichment_analysis"
+format: html
+editor: visual
+---
+
+```{r}
+rm(list = ls())
+set.seed(123)  # Use any consistent value
+
+# Control operations: 
+load_tpm <- FALSE
+plot_mds <- FALSE
+
+# Until I decide to loop, define cancer type here: 
+c_type <- "LAML"
+# Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
+sub_ctype <- "SKCM_tumor"
+# PAAD, BRCA
+
+# After multivariate analysis I look at significant phenotypes, but filter out the ones that are <min_sample_size for any of the two categories being compared. 
+# 10 has been standard.
+min_sample_size <- 10
+```
+
+## Load libraries and data
+
+```{r}
+library(tidyverse)
+library(GSVA)
+```
