@@ -20,7 +20,7 @@ load_tpm <- FALSE
 plot_mds <- FALSE
 
 # Until I decide to loop, define cancer type here: 
-c_type <- "DLBC"
+c_type <- "LUAD"
 # Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
 sub_ctype <- "SKCM_tumor"
 # PAAD
@@ -109,6 +109,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
 # All have NO                            "history_of_neoadjuvant_treatment",
 # Too few in each subtype                "human_papillomavirus_type",
                                          "neoplasm_histologic_grade",
+                                         "primary_therapy_outcome_success",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy",
                                          "tobacco_smoking_history"),
@@ -121,6 +122,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "history_of_neoadjuvant_treatment",
                                          "neoplasm_histologic_grade",
                                          "pathologic_stage",
+                                         "primary_therapy_outcome_success",
                                          "targeted_molecular_therapy"),
                               "DLBC" = c("age_at_initial_pathologic_diagnosis",
                                          "bone_marrow_involvement",
@@ -131,6 +133,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "histological_type",
 # All have Negative                      "hiv_status",
                                          "ldh_level",
+                                         "primary_therapy_outcome_success",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy"),
                               "LUAD" = c("additional_pharmaceutical_therapy",
@@ -157,6 +160,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
                                          "history_of_neoadjuvant_treatment",
                                          "karnofsky_performance_score",
                                          "pathologic_stage",
+                                         "primary_therapy_outcome_success",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy",
                                          "tobacco_smoking_history"),
@@ -183,6 +187,7 @@ interesting_phenotype <- list("LAML" = c("acute_myeloid_leukemia_calgb_cytogenet
 # This has only one yes, rest are no     "history_of_neoadjuvant_treatment",
                                          "neoplasm_histologic_grade",
                                          "pathologic_stage",
+                                         "primary_therapy_outcome_success",
                                          "radiation_therapy",
                                          "targeted_molecular_therapy",
                                          "tobacco_smoking_history")
@@ -231,7 +236,9 @@ rename_phenotype = list(
   "melanoma_ulceration_indicator" = "Melanoma Ulceration",
   "alcoholic_exposure_category" = "Alcoholic Exposure",
   "history_of_chronic_pancreatitis" = "History of Chronic Pancreatitis",
-  "history_of_diabetes" = "History of Diabetes")
+  "history_of_diabetes" = "History of Diabetes",
+  "egfr_mutation_result" = "EGFR Mutation Result",
+  "number_pack_years_smoked" = "Number of Pack Years Smoked")
 ```
 
 ```{r}
@@ -575,9 +582,9 @@ if ("age_at_initial_pathologic_diagnosis" %in% colnames(df_pheno_of_interst)){
     unlist() %>% as.numeric() %>% 
     summary()
 
-  q1_age <- stat_age["1st Qu."] %>% as.numeric()
-  median_age <- stat_age["Median"] %>% as.numeric()
-  q3_age <- stat_age["3rd Qu."] %>% as.numeric()
+  q1_age <- stat_age["1st Qu."] %>% as.numeric()  %>% round()
+  median_age <- stat_age["Median"] %>% as.numeric() %>% round()
+  q3_age <- stat_age["3rd Qu."] %>% as.numeric() %>% round()
   
   df_pheno_of_interst <- df_pheno_of_interst %>% 
     mutate(age_at_initial_pathologic_diagnosis = 
@@ -640,6 +647,31 @@ if ("breslow_depth_value" %in% colnames(df_pheno_of_interst)){
       dplyr::select(-breslow_depth_value)
   }
   
+}
+
+if ("number_pack_years_smoked" %in% colnames(df_pheno_of_interst)){
+  stat_packyears <- df_pheno_of_interst[["number_pack_years_smoked"]] %>% 
+    as.numeric() %>% 
+    summary()
+  
+  q1_packyears <- stat_packyears["1st Qu."] %>% as.numeric() %>% round()
+  median_packyears <- stat_packyears["Median"] %>% as.numeric() %>% round()
+  q3_packyears <- stat_packyears["3rd Qu."] %>% as.numeric() %>% round()
+  
+  df_pheno_of_interst <- df_pheno_of_interst %>% 
+    mutate(number_pack_years_smoked = 
+             as.numeric(number_pack_years_smoked)) %>% 
+    mutate(
+    number_pack_years_smoked = case_when(
+      number_pack_years_smoked < q1_packyears ~ paste0("less_than_", q1_packyears),
+      number_pack_years_smoked >= q1_packyears & 
+        number_pack_years_smoked < median_packyears ~ paste0("between_", q1_packyears, "_(incl)_and_", median_packyears, "_(excl)"),
+      number_pack_years_smoked >= median_packyears & 
+        number_pack_years_smoked < q3_packyears ~ paste0("between_", median_packyears, "_(incl)_and_", q3_packyears, "_(excl)"),
+      number_pack_years_smoked >= q3_packyears ~  paste0("more_than_or_eq_",
+                                                              q3_packyears)
+    )
+  )
 }
 
 # Collect three of the neoplasm histologic stages into one: 
@@ -897,6 +929,22 @@ if ("breslow_depth_value" %in% colnames(df_pheno_of_interst)){
     levels=c(frst, scnd, thrd, frth))
 }
 
+# Change level order on breslow and age: 
+if ("number_pack_years_smoked" %in% colnames(df_pheno_of_interst)){
+  subgroups_packyears <- df_pheno_of_interst[["number_pack_years_smoked"]] %>% 
+    na.omit() %>% 
+    unique() 
+  
+  frst <- subgroups_packyears[grep("less",subgroups_packyears)]
+  thrd <- max_in_char_list(subgroups_packyears[grep("between",subgroups_packyears)])
+  frth <- subgroups_packyears[grep("more",subgroups_packyears)]
+  scnd <- subgroups_packyears[!subgroups_packyears %in% c(frst, frth, thrd)]
+  
+  df_pheno_of_interst[["number_pack_years_smoked"]] <- factor(
+    df_pheno_of_interst[["number_pack_years_smoked"]], 
+    levels=c(frst, scnd, thrd, frth))
+}
+
 if ("age_at_initial_pathologic_diagnosis" %in% colnames(df_pheno_of_interst)){
   subgroups_age <- df_pheno_of_interst[["age_at_initial_pathologic_diagnosis"]] %>%
     na.omit() %>% 
@@ -917,6 +965,17 @@ if("karnofsky_performance_score" %in% colnames(df_pheno_of_interst)) {
   df_pheno_of_interst[["karnofsky_performance_score"]] <- factor(
     df_pheno_of_interst[["karnofsky_performance_score"]], 
     levels=level_order_karnofsky_performance)
+}
+
+if("tobacco_smoking_history" %in% colnames(df_pheno_of_interst)) {
+  df_pheno_of_interst[["tobacco_smoking_history"]] <- factor(
+    df_pheno_of_interst[["tobacco_smoking_history"]], 
+    levels=c("Lifelong_NonSmoker",
+             "Former_smoker_less_than_15y",
+             "Former_smoker_duration_na",
+             "Former_smoker_more_than_15y",
+             "Current_smoker")
+      )
 }
 
 ```
@@ -1059,7 +1118,7 @@ is_all_numeric <- function(x) {
 
 
 R_element_name <- ifelse(c_type == "SKCM", 
-                         paste0(file_path_xenadata, 'limma_univariate/limma_univariate_', c_type, '_', sub_ctype, '.RData'),
+                         paste0(file_path_xenadata, 'limma_univariate/limma_univariate_', sub_ctype, '.RData'),
                           paste0(file_path_xenadata, 'limma_univariate/limma_univariate_', c_type, '.RData'))
 
 if (!file.exists(R_element_name)){
@@ -1225,6 +1284,8 @@ if (!file.exists(R_element_name)){
 ```{r}
 ## FUNCTIONS
 # Function that will detect if any of two categories has sample size < than allowed
+# NB! If min_sample_size is 10, it will return LOW if any subgroup sample size is 10. Meaning it is only included if >min_sample_size
+#test_if_exceeds_min_sample_size("YES:6, NO:89",5)
 test_if_exceeds_min_sample_size <- function(sample_size_string,
                                             min_sample_size){
   
@@ -1245,6 +1306,9 @@ test_if_exceeds_min_sample_size <- function(sample_size_string,
 
 }
 
+contains_numbers <- function(phrase) {
+    grepl("\\d", phrase)
+}
 
 ####
 # Function used for formatting age or breslow for plots: 
@@ -1255,14 +1319,23 @@ use_bigger_smaller_signs <- function(input_str) {
     suffix <- sub(".*:(\\d+)$", "\\1", phrase)
     phrase <- sub(":\\d+$", "", phrase)
     
+    # Preserve prefix (e.g., "Former_smoker")
+    prefix <- ifelse(grepl("smoker", phrase),
+                     sub("(_less_than_.*|_more_than_.*)", "", phrase),
+                     "")
+    
     # Handle "less_than"
     if (grepl("less_than_(\\d+)", phrase)) {
-      num <- as.numeric(sub("less_than_(\\d+)", "\\1", phrase))
+      num <- as.numeric(sub(".*less_than_(\\d+).*", "\\1", phrase))
       res <- paste0("<", num)
       # Handle "more_than"
     } else if (grepl("more_than_or_eq_(\\d+)", phrase)) {
       num <- as.numeric(sub("more_than_or_eq_(\\d+)", "\\1", phrase))
       res <- paste0("≥", num)
+      # Handle "between_x_incl._and_y_excl."
+    } else if (grepl("more_than_(\\d+)", phrase)) {
+      num <- as.numeric(sub(".*more_than_(\\d+).*", "\\1", phrase))
+      res <- paste0(">", num)
       # Handle "between_x_incl._and_y_excl."
     } else if (grepl("between_(\\d+)_.incl._and_(\\d+)_.excl.", phrase)) {
       nums <- as.numeric(unlist(regmatches(phrase, gregexpr("\\d+", phrase))))
@@ -1271,12 +1344,16 @@ use_bigger_smaller_signs <- function(input_str) {
       res <- phrase
     }
 
+    # Reattach prefix if it exists and add y
+    if (prefix != "" & contains_numbers(phrase)) {
+        res <- paste0(prefix, "_", res, "y")
+    }
+    
     # Add the suffix back if it was present
     if (suffix != phrase) {
         res <- paste0(res, ":", suffix)
     }
 
-    
     # If no match is found, return the original phrase
     return(res)
   }
@@ -1289,9 +1366,6 @@ use_bigger_smaller_signs <- function(input_str) {
     converted_parts <- sapply(parts, convert_phrase)
     return(paste(converted_parts, collapse = " vs "))
   } else if (grepl(", ", input_str)){
-    # Strip out numeric suffixes like ':5' or ':8'
-    phrase <- sub(":\\d+$", "", phrase)
-    
     parts <- strsplit(input_str, ", ")[[1]]
     
     # Convert each part and join them with " vs " separator
@@ -1308,7 +1382,6 @@ firstup <- function(x) {
   substr(x, 1, 1) <- toupper(substr(x, 1, 1))
   x
 }
-
 ```
 
 ```{r}
@@ -1332,8 +1405,68 @@ table_w_adjP_sig <- full_table_w_low %>%
 ##### Heatmap
 
 ```{r}
+### MAKE text size in plot. 
 
 
+# Number of significant phenotypes: 
+sig_comparison_list <- table_w_adjP_sig %>% 
+  filter(!grepl("cellfrac", phenotype)) %>% 
+  filter(sample_sizes_limit != "LOW") %>% 
+  dplyr::select(comparison) %>% unique()
+
+if (c_type == "BRCA" & nrow(sig_comparison_list) > 29){
+  txt_axis_size <- 2
+  star_size <- 1
+  title_size <- 4.5
+  subtitle_size <- 4
+  legend_txt_size <- subtitle_size
+  legend_size <- 2
+} else if (nrow(sig_comparison_list) > 25){
+  txt_axis_size <- 2
+  star_size <- 1
+  title_size <- 5
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 2
+} else if (nrow(sig_comparison_list) > 20){
+  txt_axis_size <- 5
+  star_size <- 2
+  title_size <- 9
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 3
+} else if (c_type %in% c("SKCM", "CESC") & nrow(sig_comparison_list) > 16){
+  txt_axis_size <- 3
+  star_size <- 1
+  title_size <- 5
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 3
+} else if (c_type %in% c("PAAD", "HNSC") & nrow(sig_comparison_list) > 14){
+  txt_axis_size <- ifelse(c_type == "PAAD", 3, 3.5)
+  star_size <- 1.5
+  title_size <- 7
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 3
+} else if (c_type == "SKCM" & nrow(sig_comparison_list) > 10){
+  txt_axis_size <- 5
+  star_size <- 2
+  title_size <- 7
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 3
+} else {
+  txt_axis_size <- 8
+  star_size <- 3
+  title_size <- 12
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 6
+}
+```
+
+```{r}
 # Plot with correct y-axis coloring
 # Change the names for the plot: 
 table_w_adjP_sig %>% 
@@ -1344,9 +1477,14 @@ table_w_adjP_sig %>%
   rowwise() %>% 
   # Change age to use symbols: 
   mutate(comparison = ifelse(phenotype == "Age at Diagnosis" | 
-                               grepl("breslow", str_to_lower(phenotype)),
+                               grepl("breslow", str_to_lower(phenotype)) |
+                               grepl("pack years", str_to_lower(phenotype)) |
+                               grepl("tobacco smoking", str_to_lower(phenotype)),
                              use_bigger_smaller_signs(comparison),
-                             comparison)) %>% 
+                             comparison)) %>%
+ mutate(comparison = ifelse(phenotype == "Karnofsky Performance Score",
+                             gsub("X", "", comparison),
+                             comparison)) %>%
   mutate(condition_plot = ifelse(comparison == "continuous_linear_relations" |
                                    grepl("MUT", comparison), 
                                  paste0(phenotype), 
@@ -1365,20 +1503,25 @@ table_w_adjP_sig %>%
     TRUE              ~ "")) %>% 
   ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
   geom_tile() + 
-  geom_text(aes(label = significance), color = "black", size = 3) + 
+  geom_text(aes(label = significance), color = "black", size = star_size) + 
   scale_fill_gradient2(low = "blue4", mid = "white", high = "red4", midpoint = 0) +
   theme_minimal() +
-  theme(axis.text.x = element_text(size = 8, 
+  theme(axis.text.x = element_text(size = txt_axis_size, 
                                    angle = 30,
                                    vjust = 0.75),
-    axis.text.y = element_text(size = 8),
+    axis.text.y = element_text(size = txt_axis_size),
     axis.title = element_blank(),
-    title = element_text(size=15)
+    title = element_text(size=title_size),
+    plot.subtitle =  element_text(size=subtitle_size),
+    legend.title = element_text(size = legend_txt_size),
+    legend.text = element_text(size = legend_txt_size-2),
+    legend.key.size = unit(legend_size, "mm")
   ) +
   ggtitle(ifelse(c_type == "SKCM",
                  paste0("Limma univariate analysis of ", c_type, 
                         " (", gsub("SKCM_", "",sub_ctype), ")"),
                  paste0("Limma univariate analysis of ", c_type))) +
+  labs(subtitle = "Phenotypes") + 
   coord_fixed() # Make sure tiles are square
 
 ggsave(filename = ifelse(c_type == "SKCM",
@@ -1435,12 +1578,13 @@ table_w_adjP_sig %>%
                  paste0("Limma univariate analysis of ", c_type, 
                         " (", gsub("SKCM_", "",sub_ctype), ")"),
                  paste0("Limma univariate analysis of ", c_type))) +
+  labs(subtitle = "Cell fractions") + 
   coord_fixed() # Make sure tiles are square
 
 ggsave(filename = ifelse(c_type == "SKCM",
                   paste0(path_save_plots, 
                   "heatmap_univariate_cellfrac_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  sub_ctype,
                   ".pdf"),
                   paste0(path_save_plots, 
                   "heatmap_univariate_cellfrac_",
@@ -2038,6 +2182,39 @@ if (exists("lasso_coefficients")){
 ### Heatmap
 
 ```{r}
+# Make text sizes:
+
+# Number of significant phenotypes: 
+sig_comparison_multi_list <- multivariate_w_adjP_sig %>% 
+  filter(!grepl("cellfrac", phenotype)) %>% 
+  filter(sample_sizes_limit != "LOW") %>% 
+  dplyr::select(comparison) %>% unique()
+
+if (nrow(sig_comparison_multi_list) > 20){
+  txt_axis_size <- 3
+  star_size <- 1.5
+  title_size <- 6
+  subtitle_size <- title_size+0
+  legend_txt_size <- 4
+  legend_size <- 3
+} else if (c_type == "SKCM" & nrow(sig_comparison_list) > 10){
+  txt_axis_size <- 6
+  star_size <- 2
+  title_size <- 8
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 3
+} else {
+  txt_axis_size <- 8
+  star_size <- 3
+  title_size <- 12
+  subtitle_size <- title_size+0
+  legend_txt_size <- subtitle_size
+  legend_size <- 6
+}
+```
+
+```{r}
 
 if (length(sig_phenotypes_multivariate)>0){
     
@@ -2049,9 +2226,13 @@ if (length(sig_phenotypes_multivariate)>0){
     rowwise() %>% 
     # Change age to use symbols: 
     mutate(comparison = ifelse(phenotype == "Age at Diagnosis" | 
-                                 grepl("breslow", str_to_lower(phenotype)),
+                                 grepl("breslow", str_to_lower(phenotype)) |
+                               grepl("pack_years", str_to_lower(phenotype)),
                                use_bigger_smaller_signs(comparison),
                                comparison)) %>% 
+    mutate(comparison = ifelse(phenotype == "Karnofsky Performance Score",
+                               gsub("X", "", comparison),
+                               comparison)) %>%
     mutate(condition_plot = ifelse(comparison == "continuous_linear_relations" |
                                      grepl("MUT", comparison), 
                                    paste0(phenotype), 
@@ -2069,17 +2250,22 @@ if (length(sig_phenotypes_multivariate)>0){
       TRUE              ~ "")) %>% 
     ggplot(aes(x = gene, y = condition_plot, fill = logFC)) +
     geom_tile() + 
-    geom_text(aes(label = significance), color = "black", size = 3) + 
+    geom_text(aes(label = significance), color = "black", size = star_size) + 
     scale_fill_gradient2(low = "blue4", mid = "white", high = "red4", midpoint = 0) +
     theme_minimal() +
-    theme(axis.text.x = element_text(size = 8, 
+    theme(axis.text.x = element_text(size = txt_axis_size, 
                                      angle = 30,
                                      vjust = 0.75),
-      axis.text.y = element_text(size = 8),
+      axis.text.y = element_text(size = txt_axis_size),
       axis.title = element_blank(),
-      title = element_text(size=15)
+      title = element_text(size=title_size),
+      plot.subtitle = element_text(size = subtitle_size),
+      legend.title = element_text(size = subtitle_size),
+      legend.text = element_text(size = legend_txt_size),
+      legend.key.size = unit(legend_size, "mm")
     ) +
     coord_fixed() +
+    labs(subtitle = "Phenotypes") + 
     ggtitle(ifelse(c_type == "SKCM",
                    paste0("Limma multivariate analysis of ", c_type, 
                           " (", gsub("SKCM_", "",sub_ctype), ")"),
@@ -2090,7 +2276,7 @@ if (length(sig_phenotypes_multivariate)>0){
   ggsave(filename = ifelse(c_type == "SKCM",
                 paste0(path_save_plots, 
                 "heatmap_multivariate_phenotypes_",
-                c_type, "_", gsub("SKCM_", "",sub_ctype),
+                sub_ctype,
                 ".pdf"),
                 paste0(path_save_plots, 
                 "heatmap_multivariate_",
@@ -2135,6 +2321,7 @@ if (length(sig_phenotypes_multivariate)>0){
       title = element_text(size=15)
     ) +
     coord_fixed() +
+    labs(subtitle = "Cell fractions") + 
     ggtitle(ifelse(c_type == "SKCM",
                  paste0("Limma multivariate analysis of ", c_type, 
                         " (", gsub("SKCM_", "",sub_ctype), ")"),
@@ -2145,7 +2332,7 @@ if (length(sig_phenotypes_multivariate)>0){
   ggsave(filename = ifelse(c_type == "SKCM",
                   paste0(path_save_plots, 
                   "heatmap_multivariate_cellfrac_",
-                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  sub_ctype,
                   ".pdf"),
                   paste0(path_save_plots, 
                   "heatmap_multivariate_cellfrac_",
@@ -2178,7 +2365,8 @@ if (length(sig_phenotypes_multivariate)>0){
     rowwise() %>% 
     # Change age to use symbols: 
     mutate(cat_sample_size = ifelse(phenotype == "Age at Diagnosis" | 
-                                 grepl("breslow", str_to_lower(phenotype)),
+                                 grepl("breslow", str_to_lower(phenotype)) |
+                                   grepl("pack_years", str_to_lower(phenotype)),
                                use_bigger_smaller_signs(cat_sample_size),
                                cat_sample_size)) %>% 
     mutate(cat_sample_size = gsub("≥", ">=", cat_sample_size)) %>% 
@@ -2210,7 +2398,7 @@ if (length(sig_phenotypes_multivariate)>0){
   table_file_name <- ifelse(c_type == "SKCM",
                             paste0(path_save_plots,
                                    "multivariate_sample_size_table_", 
-                                   c_type, "_", sub_ctype, ".pdf"),
+                                   sub_ctype, ".pdf"),
                             paste0(path_save_plots,
                                    "multivariate_sample_size_table_", 
                                    c_type, ".pdf"))
@@ -2236,11 +2424,12 @@ univariate_sample_size_table <- table_w_adjP_sig %>%
   mutate(phenotype = gsub("cellfrac_", "", phenotype)) %>% 
   mutate(phenotype = gsub("\\.\\.\\.", " - ", phenotype)) %>% 
   mutate(phenotype = gsub("\\.", " ", phenotype)) %>% 
-  mutate(phenotype = gsub("Tregs", "", phenotype)) %>%
+  mutate(phenotype = gsub("Tregs", "", phenotype)) %>% 
   rowwise() %>% 
   # Change age to use symbols: 
   mutate(cat_sample_size = ifelse(phenotype == "Age at Diagnosis" | 
-                               grepl("breslow", str_to_lower(phenotype)),
+                               grepl("breslow", str_to_lower(phenotype)) |
+                                 grepl("pack_years", str_to_lower(phenotype)),
                              use_bigger_smaller_signs(cat_sample_size),
                              cat_sample_size)) %>% 
   mutate(cat_sample_size = gsub("≥", ">=", cat_sample_size)) %>% 
@@ -2271,7 +2460,7 @@ univariate_sample_size_table %>%
 table_file_name <- ifelse(c_type == "SKCM", 
               paste0(path_save_plots, 
                      "univariate_sample_size_table_", 
-                     c_type, "_", sub_ctype, ".pdf"),
+                     sub_ctype, ".pdf"),
               paste0(path_save_plots, 
                      "univariate_sample_size_table_", 
                      c_type, ".pdf"))
@@ -2281,6 +2470,7 @@ cat(table, sep="\n",
     file=table_file_name)
 render(table_file_name,
        output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+
 
 ```
 
