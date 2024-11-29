@@ -747,7 +747,7 @@ if("clinical_stage" %in% colnames(df_pheno_of_interst)) {
 # Change tobacco smoking history scale to uncerstandable strings: 
 if("tobacco_smoking_history" %in% colnames(df_pheno_of_interst)) {
   
-  if (c_type == "CESC"){
+  if (c_type %in% c("CESC", "PAAD")){
     df_pheno_of_interst <- df_pheno_of_interst %>% 
       mutate(tobacco_smoking_history = factor(
         ifelse(tobacco_smoking_history == 1, 

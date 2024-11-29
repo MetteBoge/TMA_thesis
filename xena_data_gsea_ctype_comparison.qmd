@@ -1,0 +1,264 @@
+---
+title: "xena_data_gene_enrichment_analysis_2"
+format: html
+editor: visual
+---
+
+```{r}
+rm(list = ls())
+set.seed(123)  # Use any consistent value
+```
+
+## Load libraries and data
+
+```{r}
+library(tidyverse)
+library(GSVA)
+library(GSEABase)
+library(SummarizedExperiment)
+#library(Hmisc) # rcorr
+#library(reticulate) #using python
+library(msigdbr)
+#library(clusterProfiler) Use ssgsea instead
+library(enrichplot)
+library(kableExtra)
+library(Cairo)
+library(rmarkdown)
+library(webshot2) # save_kable
+#library(ggridges)
+packageVersion("msigdbr")
+```
+
+```{r}
+target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
+cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM_metastatic", "SKCM_tumor", "LUAD", "LUSC")
+```
+
+## Compare results across cancer types
+
+```{r}
+# Loop cancer types and save the gsea_results in a list...
+
+gsea_results_ctype <- list()
+
+for (c_type in cancer_abbr_list){
+  R_element_name_2 <- paste0(file_path_xenadata, 
+                             'GSEA_Rdata/gsea_results_', 
+                             c_type, '.RData')
+  
+  if (!file.exists(R_element_name_2)){
+    warning(paste("No gsea results exist for ", c_type))
+    
+  } else {
+    gsea_results_ctype[[c_type]] <- readRDS(R_element_name_2)
+  }
+}
+```
+
+```{r}
+#top_abs_nes <- 20
+
+# Make list where SKCM is parted in metastatic and tumor
+gene_x <- target_list[1]
+
+gene_gsea_results <- list()
+gsea_summary_compare <- list()
+
+# For each gene, loop cancer types and extract the gene based gsea result. 
+for (gene_x in target_list){
+  
+  ## Extract all gsea results for gene from all cancer types. 
+  for (c_type in cancer_abbr_list){
+    
+    gsea_gene <- gsea_results_ctype[[c_type]][[gene_x]]
+    gsea_gene_df <- gsea_gene %>% 
+      as.data.frame()
+    
+    if (nrow(gsea_gene_df) > 0){
+      print(paste("gsea_gene_df has", nrow(gsea_gene_df), "rows for", 
+                  gene_x, "in",  c_type))
+      
+      if(is.null(gene_gsea_results[[gene_x]])){
+        gene_gsea_results[[gene_x]] <- gsea_gene_df %>% 
+          mutate(cancer_type = c_type) %>%  # Column for identifying cancer type origin
+          arrange(-abs(NES))
+        
+      } else {
+        # If gene_gsea_results[[gene_x]] exists, add as new rows: 
+        tmp_df <- gsea_gene_df %>% 
+          mutate(cancer_type = c_type) %>% 
+          arrange(-abs(NES)) 
+        
+        gene_gsea_results[[gene_x]] <- gene_gsea_results[[gene_x]] %>% 
+          bind_rows(tmp_df)
+      }
+      
+    }
+  }
+  
+  # Remove rownames
+  rownames(gene_gsea_results[[gene_x]]) <- NULL
+  
+  gsea_summary_compare[[gene_x]] <- gene_gsea_results[[gene_x]] %>% 
+    group_by(ID) %>% 
+    summarise(cancer_types = paste(unique(cancer_type), collapse = ", "),
+              num_cancer_types = n_distinct(cancer_type)) %>%
+    arrange(ID) %>% 
+    mutate(gene = gene_x)
+}
+```
+
+```{r}
+# Collect from all cancer types into one.
+gsea_summary_compare_full <- gsea_summary_compare %>% 
+  bind_rows() %>% 
+  arrange(desc(num_cancer_types)) 
+
+# Make df of max amount of cancer types agreeing on BP for each gene:
+max_agreeing_ctypes <- gsea_summary_compare_full %>% 
+  dplyr::select(gene, num_cancer_types) %>% 
+  unique() %>% 
+  group_by(gene) %>%
+  summarise(num_cancer_types = max(num_cancer_types)) %>%
+  dplyr::rename(max_n_ctype = num_cancer_types) 
+
+# Make data frame only containing the BP related to gene with max number of c types agreeing (gene based max)
+gsea_maxctype_compare <- gsea_summary_compare_full %>% 
+  left_join(max_agreeing_ctypes, by = "gene") %>% 
+  filter(num_cancer_types == max_n_ctype)
+
+
+BP_max_ctype_named_list <- gsea_maxctype_compare %>% 
+  dplyr::select(gene, ID) %>% 
+  group_by(gene) %>% 
+  summarise(related_processes = list(ID)) %>% 
+  deframe()
+```
+
+```{r}
+max_agreeing_ctypes %>% 
+```
+
+## Results
+
+```{r}
+
+gsea_result <- list()
+
+## Collect results: 
+for (gene_x in target_list){
+  
+  gsea_maxctype_compare_gene <- gsea_maxctype_compare %>% 
+    filter(gene == gene_x)
+  
+  gsea_result[[gene_x]] <- gene_gsea_results[[gene_x]] %>% 
+    filter(ID %in% BP_max_ctype_named_list[[gene_x]]) %>% 
+    arrange(ID) %>% 
+    group_by(ID) %>%
+    summarise(
+      min_NES = min(NES, na.rm = TRUE),
+      max_NES = max(NES, na.rm = TRUE)
+    ) %>% 
+    mutate(keep = ifelse((min_NES > 0 & max_NES > 0) |
+                           (min_NES < 0 & max_NES < 0),
+                         TRUE, FALSE)) %>% 
+    filter(keep) %>% 
+    left_join(gsea_maxctype_compare_gene[c("ID", 
+                                           "cancer_types", 
+                                           "max_n_ctype", 
+                                           "gene")], 
+              by="ID") %>% 
+    dplyr::select(-keep) 
+}
+
+  
+```
+
+```{r}
+gsea_result_full <- gsea_result %>% 
+  bind_rows() %>% 
+  group_by(gene) %>% 
+  arrange(desc(max_NES), .by_group = TRUE) %>% 
+  ungroup()
+
+
+# Focus on only top 20 most correlated (NES) BP: 
+top_bps <- gsea_result_full %>% 
+  group_by(ID) %>% 
+  mutate(abs_max_NES = max(max_NES, abs(min_NES))) %>% 
+  ungroup() %>% 
+  dplyr::select(ID, abs_max_NES) %>% unique() %>% 
+  arrange(desc(abs_max_NES)) %>% 
+  dplyr::slice(1:20) %>% # Select top 20 BPs 
+  dplyr::select(ID) %>% unlist(use.names = F)
+  
+filtered_gsea_bp <- gsea_result_full %>% 
+  filter(ID %in% top_bps)
+# gsea_result_full %>% dplyr::select(ID) %>% unique
+```
+
+## Plots
+
+```{r}
+# Create the bubble plot
+library(packcircles)
+library(ggplot2)
+library(ggforce)
+
+# Normalize size for better scaling
+filtered_gsea_bp$size <- scales::rescale(filtered_gsea_bp$max_n_ctype, to = c(1, 6)) # for bubble sizes
+
+
+# Packing the inner gene bubbles
+gene_packing <- circleProgressiveLayout(filtered_gsea_bp$size, sizetype = "area")
+filtered_gsea_bp <- cbind(filtered_gsea_bp, gene_packing)
+
+
+# Packing the outer biological process bubbles
+bp_sizes <- aggregate(size ~ ID, data = filtered_gsea_bp, FUN = sum)
+bp_packing <- circleProgressiveLayout(bp_sizes$size, sizetype = "area")
+bp_layout <- cbind(bp_sizes, bp_packing)
+
+# Merge BP coordinates into gene data
+filtered_gsea_bp <- merge(filtered_gsea_bp, 
+                          bp_layout, 
+                          by = "ID", suffixes = c("_gene", "_ID"))
+
+filtered_gsea_bp <- merge(filtered_gsea_bp, 
+                          bp_layout, 
+                          by = "ID", suffixes = c("_gene", "_ID"))
+```
+
+```{r}
+ggplot() +
+  # Outer BP circles
+  geom_circle(
+    data = bp_layout,
+    aes(x0 = x, y0 = y, r = radius),
+    fill = "gray90", color = "black", alpha = 0.3
+  ) +
+  # Inner gene circles
+  geom_circle(
+    data = filtered_gsea_bp,
+    aes(x0 = x_gene + x, y0 = y_gene + y, r = radius_gene, fill = max_NES),
+    color = "black", alpha = 0.8
+  ) +
+  # Add gene labels
+  geom_text(
+    data = filtered_gsea_bp,
+    aes(x = x_gene + x, y = y_gene + y, label = gene),
+    size = 3
+  ) +
+  # Add BP labels
+  geom_text(
+    data = bp_layout,
+    aes(x = x, y = y, label = ID),
+    size = 5, fontface = "bold"
+  ) +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_void() +
+  labs(
+    title = "Bubble Plot: Biological Processes and Associated Genes",
+    fill = "Max NES"
+  )
+```

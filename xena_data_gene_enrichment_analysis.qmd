@@ -13,29 +13,29 @@ load_tpm <- FALSE
 plot_mds <- FALSE
 
 # Until I decide to loop, define cancer type here: 
-c_type <- "LAML"
+c_type <- "SKCM"
 # Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
-sub_ctype <- "SKCM_tumor"
+sub_ctype <- "SKCM_metastatic"
 # PAAD, BRCA
 
-# After multivariate analysis I look at significant phenotypes, but filter out the ones that are <min_sample_size for any of the two categories being compared. 
-# 10 has been standard.
-min_sample_size <- 10
 ```
 
 ## Load libraries and data
 
 ```{r}
 library(tidyverse)
-#library(GSVA)
+library(GSVA)
+library(GSEABase)
+library(SummarizedExperiment)
 #library(Hmisc) # rcorr
 #library(reticulate) #using python
 library(msigdbr)
-library(clusterProfiler)
+#library(clusterProfiler) Use ssgsea instead
 library(enrichplot)
 library(kableExtra)
 library(Cairo)
 library(rmarkdown)
+library(webshot2) # save_kable
 #library(ggridges)
 packageVersion("msigdbr")
 ```
@@ -172,7 +172,9 @@ if (!exists("df_tpm_data")){
 }
 ```
 
-## Correlate genes
+## GSVA: ssGSEA
+
+### Correlate genes
 
 Make pairwise correlation of our target gene vs all other genes (one target gene at a time)
 
@@ -222,6 +224,9 @@ if (!file.exists(R_element_name)){
   
   for (gene_x in target_list){
     print(paste("Running correlation analysis and adding GO terms for", gene_x))
+    print(paste("Using compute_exact_p_val =", compute_exact_p_val, ", and suppressing warnings related to cor.test"))
+    
+    op <- options(warn = (-1)) # suppress warnings
     # Compute p-values for correlations (using cor.test for each gene)
     correlation_stats <- apply(gene_expression_matrix, 1, function(gene) {
       test <- cor.test(gene_expression_matrix[gene_x, ], 
@@ -230,6 +235,7 @@ if (!file.exists(R_element_name)){
                        exact = compute_exact_p_val)
       c(correlation = test$estimate, p.value = test$p.value)
     })
+    options(op) # reset the default value, if you want
     
     p_values <- correlation_stats["p.value",]
     
@@ -280,11 +286,111 @@ if (!file.exists(R_element_name)){
   correlation_stats_2 <- readRDS(R_element_name)
   
 }
+k
+```
 
+### New implementation ssgsea
+
+```{r}
+R_element_name_2 <- ifelse(c_type == "SKCM", 
+                         paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea', sub_ctype, '.RData'),
+                          paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea', c_type, '.RData'))
+
+if (!file.exists(R_element_name_2)){
+  # Making a matrix of genes x target genes 
+  # I will include ALL genes, not only the significantly correlating ones... And also include the gene it self.
+  for (gene_x in target_list){
+    if (!exists("full_corr_df")){
+      # Make dataframe anew, with first column being gene names of all genes. 
+      full_corr_df <- correlation_stats_2[[gene_x]] %>% 
+        dplyr::select(gene) %>% unique() %>% 
+        unlist(use.names = F) %>% 
+        tibble("gene" = .)
+    }
+    
+    tmp_col <- correlation_stats_2[[gene_x]] %>% 
+      dplyr::select(gene, correlation.rho) %>% 
+      unique()
+  
+    
+    full_corr_df <- full_corr_df %>% 
+      left_join(tmp_col, by="gene") %>% 
+      dplyr::rename(!!gene_x := correlation.rho)
+     
+  }
+  
+  # Rename gene names (target genes) from gene column to be ensembl !
+  geneName_ensg_nlist <- geneName_ensg %>% deframe()
+  
+  full_corr_df <- full_corr_df %>% 
+    mutate(gene = recode(gene, !!!geneName_ensg_nlist))
+  
+  
+  #### ssGSEA analysis
+  ########
+  #### Setup GeneSetCollection object: 
+  # Group the gene sets by their set name
+  GO_genes <- GO_database %>% 
+    filter(ensembl_gene %in% unlist(full_corr_df["gene"]))
+  
+  gene_set_list <- split(GO_ranked_genes$ensembl_gene, GO_ranked_genes$gs_name)
+  
+  # Create a GeneSetCollection object
+  gene_set_collection <- GeneSetCollection(
+    lapply(names(gene_set_list), function(set_name) {
+      GeneSet(
+        geneIds = gene_set_list[[set_name]], 
+        setName = set_name
+      )
+    })
+  )
+  
+  
+  ########
+  #### Create the SummarizedExperiment object
+  corr_matrix <- full_corr_df %>% 
+    column_to_rownames("gene") %>% 
+    as.matrix()
+  
+  
+  se <- SummarizedExperiment(
+    assays = list(counts = corr_matrix),  # Expression data
+    colData = DataFrame(SampleID = colnames(corr_matrix)),  # Sample metadata
+    rowData = DataFrame(GeneID = rownames(corr_matrix))  # Gene metadata
+  )
+  
+  #########
+  #### Setup the ssGSEA 
+  
+  param <- ssgseaParam(se, gene_set_collection)
+  
+  # Perform ssGSEA
+  ssgsea_results <- gsva(param)
+
+  saveRDS(ssgsea_results, file = R_element_name_2)
+  
+} else {
+  
+  ssgsea_results <- readRDS(R_element_name_2)
+}
 
 ```
 
-### GSEA
+```{r}
+ssgsea_results_df <- ssgsea_results %>% 
+  assay() %>% 
+  as.data.frame()
+
+# Subset pathways where at least one target gene has a high contribution (e.g., |ES| > 0.5)
+threshold <- 0.5
+selected_pathways <- rownames(ssgsea_results_df)[
+  apply(ssgsea_results_df[, target_list], 1, function(x) any(abs(x) > threshold))
+]
+
+selected_pathways
+```
+
+# OLD
 
 ```{r}
 
@@ -310,12 +416,20 @@ if (!file.exists(R_element_name_2)){
       select(gene, correlation.rho) %>% unique() %>% 
       deframe() 
     
-    # Perform GSEA
-    gsea_results[[gene_x]] <- GSEA(
-      geneList = ranked_genes, 
-      TERM2GENE = cor_df %>% select(gs_name, gene),
-      pvalueCutoff = 0.05
-    )
+    # If doesnt correlate with any other genes (significantly)
+    if (length(ranked_genes) < 1){
+      warning(paste(gene_x, "for", c_type, "does not correlate with any other genes significantly (adj.p.val). No GSEA analysis to be carried out."))
+      
+    } else {
+      # Perform GSEA
+      gsea_results[[gene_x]] <- GSEA(
+        geneList = ranked_genes, 
+        TERM2GENE = cor_df %>% select(gs_name, gene),
+        pvalueCutoff = 0.05
+      )
+    }
+    
+    
   }
   
   saveRDS(gsea_results, file = R_element_name_2)
@@ -356,7 +470,9 @@ firstup <- function(x) {
 ```{r}
 #gene_x <- target_list[11]
 
-for (gene_x in target_list){
+summary_table <- list()
+
+for (gene_x in names(gsea_results)){
   print(paste("Plotting GSEA results for", gene_x))
   
   gsea_res_gene <- gsea_results[[gene_x]]
@@ -400,7 +516,10 @@ for (gene_x in target_list){
     # Compute pairwise similarity of enriched terms
     term_sim <- pairwise_termsim(gsea_res_gene_tmp)
     
-    emapplot(term_sim, showCategory = 10, min_edge = 0.1) + 
+    
+    # If not enough data in term_sim it will fail. (Might due to min_edge=0.1)
+    tryCatch({
+      emapplot(term_sim, showCategory = 10, min_edge = 0.1) + 
       ggtitle(paste("GSEA Results for", gene_x, "in", c_type))  # Add a title here
     
     ggsave(filename = ifelse(c_type == "SKCM",
@@ -414,6 +533,10 @@ for (gene_x in target_list){
          height = 6,  # Adjust height as needed
          units = "in",
          device = cairo_pdf)
+    }, error = function(e) {
+    # Handle the error
+    message("Error encountered in emapplot: ", e$message)
+    })
     
   
     ###############
@@ -459,11 +582,11 @@ for (gene_x in target_list){
       total_gene_sets_tested = length(unique(cor_df$gs_name)),  # Total gene sets analyzed
       significant_gene_sets = nrow(gsea_df_2),  # Significant gene sets
       top_NES_pathways = gsea_df_2 %>%
-        arrange(desc(NES)) %>%
+        arrange(-abs(NES)) %>%
         slice(1:10) %>%
         select(Description, NES, p.adjust),  # Top 10 pathways
       top_sig_pathways = gsea_df_2 %>%
-        arrange(desc(p.adjust)) %>%
+        arrange(p.adjust) %>%
         slice(1:10) %>%
         select(Description, NES, p.adjust),
       genes_per_set = summary(gsea_df_2$setSize),  # Average size of significant sets
@@ -489,7 +612,7 @@ for (gene_x in target_list){
         
         
     # Combine all summary information into one data frame
-    summary_table <- tibble(
+    tmp_table <- tibble(
       Metric = c(
         "Total Gene Sets Tested",
         "Significant Gene Sets",
@@ -508,7 +631,7 @@ for (gene_x in target_list){
         paste0("Min: ", summary_stats$genes_per_set[["Min."]],
               ", Q1: ", summary_stats$genes_per_set[["1st Qu."]],
               ", Median: ", summary_stats$genes_per_set[["Median"]],
-              ", Mean: ", summary_stats$genes_per_set[["Mean"]],
+              ", Mean: ", round(summary_stats$genes_per_set[["Mean"]],2),
               ", Q3: ", summary_stats$genes_per_set[["3rd Qu."]],
               ", Max: ", summary_stats$genes_per_set[["Max."]]),
         top_NES_pathways_str,
@@ -516,44 +639,54 @@ for (gene_x in target_list){
       )
     )
     
-    # Make pretty table
-    table <- summary_table %>% 
-      kable(caption = paste("Summary of GSEA analysis for", 
-                            c_type, "of", gene_x),
-            escape = F,
-            format = "markdown") %>%   
-      kable_styling(full_width = F, position = "center", fixed_thead = T,
-                    latex_options = c("striped", "hold_position")) %>%
-      column_spec(1, width = "5cm") %>%
-      column_spec(2, width = "20cm", extra_css = "white-space: pre-line;")  # Handle newlines
-
       
-   # table<-kable(summary_table)#, format="markdown")
+    tmp_table <- tmp_table %>% 
+      as.matrix() %>% 
+      t() %>% 
+      as.data.frame() 
     
-    table_file_name <- ifelse(c_type == "SKCM",
-                              paste0(path_save_plots,
-                                     sub_ctype,
-                                     "_summaryTable_", 
-                                     gene_x, ".pdf"),
-                              paste0(path_save_plots,
-                                     c_type,
-                                     "_summaryTable_", 
-                                     gene_x, ".pdf"))
+    colnames(tmp_table) <- tmp_table[1,]
     
-    cat(table, sep="\n", 
-        file=table_file_name)
-    render(table_file_name,
-           output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
-
+    summary_table[[gene_x]] <- tmp_table[-1, ] %>% 
+      mutate(Gene = gene_x) %>% 
+      relocate(Gene)
     
+    rownames(summary_table[[gene_x]]) <- NULL
     
   } else {
     warning(paste(gene_x, "has no significantly enriched gene sets!"))
   }
 }
+```
 
-summary_table
+```{r}
+full_summary_table <- summary_table %>% 
+  bind_rows()
 
+full_summary_table_html <- full_summary_table %>%
+  mutate(across(c(7, 8), ~ gsub("\\n", "<br>", .)))
+
+# Make pretty table
+table <- full_summary_table_html %>% 
+  kable(caption = paste("Summary of GSEA analysis for", 
+                        c_type),
+        escape = F,
+        format = "html") %>%   
+  kable_styling(full_width = T, position = "center", fixed_thead = T,
+                latex_options = c("striped", "hold_position", "longtable")) %>%
+  column_spec(7, width = "25cm") %>%
+  column_spec(8, width = "25cm", extra_css = "white-space: pre-line;") 
+
+table_file_name <- ifelse(c_type == "SKCM",
+                          paste0(path_save_plots,
+                                 sub_ctype,
+                                 "_summaryTable.html"),
+                          paste0(path_save_plots,
+                                 c_type,
+                                 "_summaryTable.html"))
+
+table %>% 
+  save_kable(file = table_file_name)
 ```
 
 ```{r}
@@ -594,4 +727,93 @@ cnetplot(gsea_results, categorySize="p.adjust", foldChange=ranked_genes, showCat
 
 ```{r}
 
+```
+
+### GSEA
+
+```{r}
+{r}
+
+R_element_name_2 <- ifelse(c_type == "SKCM", 
+                         paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_', sub_ctype, '.RData'),
+                          paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_', c_type, '.RData'))
+
+gene_x <- target_list[1]
+
+#if (!file.exists(R_element_name_2)){
+#  
+#  gsea_results <- list()
+  
+#  for (gene_x in target_list){
+    print(paste("Running GSEA analysis for", gene_x))
+    
+    # Remove gene itself from correlation: 
+    cor_df <- correlation_stats_2[[gene_x]] %>% 
+      filter(gene != gene_x)
+    
+    # Prepare ranked gene list
+    ranked_genes <- cor_df %>%
+      filter(adjusted_p_values < 0.05) %>% 
+      arrange(desc(correlation.rho)) %>%  # Sort by correlation
+      dplyr::select(gene, correlation.rho) %>% unique() %>% 
+      deframe() 
+    
+    # If doesnt correlate with any other genes (significantly)
+    if (length(ranked_genes) < 1){
+      warning(paste(gene_x, "for", c_type, "does not correlate with any other genes significantly (adj.p.val). No GSEA analysis to be carried out."))
+      
+    } else {
+      # Perform GSEA
+      
+      ########
+      #### Setup GeneSetCollection object: 
+      # Group the gene sets by their set name
+      GO_ranked_genes <- GO_database %>% 
+        filter(ensembl_gene %in% names(ranked_genes))
+      
+      gene_set_list <- split(GO_ranked_genes$ensembl_gene, GO_ranked_genes$gs_name)
+      
+      # Create a GeneSetCollection object
+      gene_set_collection <- GeneSetCollection(
+        lapply(names(gene_set_list), function(set_name) {
+          GeneSet(
+            geneIds = gene_set_list[[set_name]], 
+            setName = set_name
+          )
+        })
+      )
+      
+      ########
+      #### Create the SummarizedExperiment object
+      expr_matrix <- df_tpm_data[[c_type]] %>% 
+        filter(sample %in% names(ranked_genes)) %>% 
+        column_to_rownames("sample") %>% 
+        as.matrix()
+      
+      
+      se <- SummarizedExperiment(
+        assays = list(counts = expr_matrix),  # Expression data
+        colData = DataFrame(SampleID = colnames(expr_matrix)),  # Sample metadata
+        rowData = DataFrame(GeneID = rownames(expr_matrix))  # Gene metadata
+      )
+      
+      #########
+      #### Setup the ssGSEA 
+      
+      param <- ssgseaParam(se, gene_set_collection)
+      
+      # Perform ssGSEA
+      ssgsea_results <- gsva(param)
+      
+    }
+    
+    
+#  }
+  
+#  saveRDS(gsea_results, file = R_element_name_2)
+  
+#} else {
+  
+#  gsea_results <- readRDS(R_element_name_2)
+#}
 ```
