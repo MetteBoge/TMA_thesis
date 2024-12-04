@@ -286,15 +286,15 @@ if (!file.exists(R_element_name)){
   correlation_stats_2 <- readRDS(R_element_name)
   
 }
-k
+
 ```
 
 ### New implementation ssgsea
 
 ```{r}
 R_element_name_2 <- ifelse(c_type == "SKCM", 
-                         paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea', sub_ctype, '.RData'),
-                          paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea', c_type, '.RData'))
+                         paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea_', sub_ctype, '.RData'),
+                          paste0(file_path_xenadata, 'GSEA_Rdata/gsea_results_ssgsea_', c_type, '.RData'))
 
 if (!file.exists(R_element_name_2)){
   # Making a matrix of genes x target genes 
@@ -333,7 +333,7 @@ if (!file.exists(R_element_name_2)){
   GO_genes <- GO_database %>% 
     filter(ensembl_gene %in% unlist(full_corr_df["gene"]))
   
-  gene_set_list <- split(GO_ranked_genes$ensembl_gene, GO_ranked_genes$gs_name)
+  gene_set_list <- split(GO_genes$ensembl_gene, GO_genes$gs_name)
   
   # Create a GeneSetCollection object
   gene_set_collection <- GeneSetCollection(
@@ -374,6 +374,17 @@ if (!file.exists(R_element_name_2)){
   ssgsea_results <- readRDS(R_element_name_2)
 }
 
+```
+
+```{r}
+ssgsea_results
+
+# Behold de ikke signifikante correlationer. 
+# Kun behold positive korrelationer.
+# Ingen gylden regel på filtrering. Men fortolk resultaterne. 
+# Top 100 og alt der er til fælles på tværs af c_types. Lander man på 10-20 overlappende BPs?
+# Eller Alle der er over 0 og overlapper for alle c types. Og så top 10. E.g. mean. 
+# Heatmap. Target vs geneset (BP) (op til 280 hvis top 20)
 ```
 
 ```{r}

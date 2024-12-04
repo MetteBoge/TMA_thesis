@@ -32,7 +32,186 @@ packageVersion("msigdbr")
 ```{r}
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM_metastatic", "SKCM_tumor", "LUAD", "LUSC")
+
+file_path_xenadata <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/Xena/"
+path_save_plots <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Plots/GSEA_plots/"
+file_path_data <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/"
 ```
+
+## Compare results across cancer types
+
+```{r}
+# Loop cancer types and save the gsea_results in a list...
+
+ssgsea_results_ctype <- list()
+
+for (c_type in cancer_abbr_list){
+  R_element_name_2 <- paste0(file_path_xenadata, 
+                             'GSEA_Rdata/gsea_results_ssgsea_', 
+                             c_type, '.RData')
+  
+  if (!file.exists(R_element_name_2)){
+    warning(paste("No gsea results exist for ", c_type))
+    
+  } else {
+    ssgsea_results_ctype[[c_type]] <- readRDS(R_element_name_2) %>% 
+      assay() %>% 
+      as.data.frame() %>% 
+      rownames_to_column("BP") %>% 
+      mutate(cancer_type = c_type)
+  }
+}
+
+ssgsea_results_all <- ssgsea_results_ctype %>% 
+  bind_rows()
+```
+
+```{r}
+# All positive correlations. Subset all the BPs in common. If more than 20, then subset these on highest mean ES across cancer types top 20.
+
+#ssgsea_gene <- list()
+ssgsea_gene_filtered <- list()
+ssgsea_gene_rest <- list()
+
+for (gene_x in target_list){
+  
+  # Select only one gene column
+  ssgsea_gene <- ssgsea_results_all %>% 
+    dplyr::select(BP, all_of(gene_x), cancer_type)
+  
+  colnames(ssgsea_gene)[2] <- "ES"
+  
+  ssgsea_gene_filtered[[gene_x]] <- ssgsea_gene %>% 
+    filter(ES > 0) %>% 
+    group_by(BP) %>% 
+    filter(n_distinct(cancer_type) == length(ssgsea_results_ctype)) %>%
+    summarize(mean_ES = mean(ES, na.rm = TRUE), .groups = "drop") %>% 
+    arrange(desc(mean_ES)) %>% 
+    mutate(BP = gsub("GOBP_", "", BP),
+           gene = gene_x) %>% 
+    head(20)
+  
+
+  # Keep all BP which are not part of the top 20
+  # Filter to keep only the ones in all cancer types (dont have to agree. Could be pos or neg)
+  # Get mean ES across all cancer types. 
+  ssgsea_gene_rest[[gene_x]] <- ssgsea_gene %>% 
+    dplyr::filter(!BP %in% ssgsea_gene_filtered[[gene_x]][["BP"]]) %>% 
+    group_by(BP) %>% 
+    reframe(tmp = n_distinct(cancer_type), ES, 
+              cancer_type) %>% 
+    filter(tmp == 11) %>% 
+    group_by(BP) %>% 
+    summarize(mean_ES = mean(ES, na.rm = TRUE), .groups = "drop") %>% 
+    mutate(BP = gsub("GOBP_", "", BP),
+           gene = gene_x)
+  
+  #colnames(ssgsea_gene_rest[[gene_x]])[2] <- gene_x
+}
+
+ssgsea_all_genes <- ssgsea_gene_filtered %>% 
+  bind_rows()
+
+ssgsea_all_gene_rest <- ssgsea_gene_rest %>% 
+  bind_rows()
+```
+
+```{r}
+library(ComplexHeatmap) # For advanced heatmap plotting
+library(circlize)
+
+# Create a matrix with Geneset_ID as rows and Gene as columns
+heatmap_matrix <- ssgsea_all_genes %>%
+  pivot_wider(names_from = gene, values_from = mean_ES, values_fill = 0) %>%
+  column_to_rownames("BP") %>%
+  as.matrix()
+
+# Perform hierarchical clustering on genes (columns of the matrix)
+gene_dist <- dist(t(heatmap_matrix), method = "euclidean") # Distance between genes
+gene_clustering <- hclust(gene_dist, method = "average")   # Hierarchical clustering
+
+# Order genes based on clustering
+ordered_genes <- colnames(heatmap_matrix)[gene_clustering$order]
+
+# Open PDF device
+pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers_onlytop20.pdf"), width = 10, height = 8)
+
+# Create heatmap
+Heatmap(
+  heatmap_matrix[, ordered_genes], # Reorder columns by clustering
+  name = "Mean\nEnrichment Score",
+  col = colorRamp2(c(0, max(heatmap_matrix)), c("pink", "red4")), # Adjust color scale
+  #col = colorRamp2(
+  #c(0, max(heatmap_matrix) / 2, max(heatmap_matrix)), # Define breaks: low, mid, high
+  #c("blue4", "white", "red4") # Colors for low, mid, high
+#), 
+  cluster_rows = FALSE, # Optionally cluster gene sets
+  cluster_columns = TRUE, # Columns already ordered
+  row_title = "Gene Sets",
+  column_title = paste("Top 20 Most Correlated Gene Ontology Biological Processes\n In 11 Cancers Across 14 Genes"),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 8) # Adjust legend title font size
+  ),
+  column_names_gp = gpar(fontsize = 8),
+  column_names_rot = 45,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 3),
+)
+
+dev.off()
+```
+
+```{r}
+# Second edition, where I plot the mean ES for each gene of the BP they did not have in top 20. NB, could be tissue specific, could have difference in up or down regulated...
+
+
+# Create a matrix with Geneset_ID as rows and Gene as columns
+heatmap_matrix_2 <- ssgsea_all_genes %>%
+  pivot_wider(names_from = gene, values_from = mean_ES, values_fill = NA) %>% 
+  pivot_longer(-BP, names_to = "gene", values_to = "mean_ES") %>% 
+  left_join(ssgsea_all_gene_rest, by = c("BP", "gene")) %>% 
+  mutate(mean_ES.x = ifelse(is.na(mean_ES.x), mean_ES.y, mean_ES.x)) %>% 
+  dplyr::select(-mean_ES.y) %>% 
+  dplyr::rename(mean_ES = mean_ES.x) %>% 
+  pivot_wider(names_from = gene, values_from = mean_ES, values_fill = NA) %>% 
+  column_to_rownames("BP") %>%
+  as.matrix()
+
+# Perform hierarchical clustering on genes (columns of the matrix)
+gene_dist <- dist(t(heatmap_matrix_2), method = "euclidean") # Distance between genes
+gene_clustering <- hclust(gene_dist, method = "average")   # Hierarchical clustering
+
+# Order genes based on clustering
+ordered_genes <- colnames(heatmap_matrix_2)[gene_clustering$order]
+
+# Open PDF device
+pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers_wo_geneset_names.pdf"), width = 10, height = 8)
+
+# Create heatmap
+Heatmap(
+  heatmap_matrix_2[, ordered_genes], # Reorder columns by clustering
+  name = "Mean\nEnrichment Score",
+  col = colorRamp2(c(0, max(heatmap_matrix_2)), c("pink", "red4")), # Adjust color scale
+  cluster_rows = FALSE, # Optionally cluster gene sets
+  cluster_columns = TRUE, # Columns already ordered
+  row_title = "Gene Sets",
+  column_title = paste("Top 20 Most Correlated Gene Ontology Biological Processes\n In 11 Cancers Across 14 Genes"),
+  show_row_names = FALSE,
+  column_names_rot = 45,
+  row_km = 3,
+  #row_names_gp = gpar(fontsize = 3),
+  column_names_gp = gpar(fontsize = 8),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 8) # Adjust legend title font size
+  )
+)
+
+# Close the PDF device
+dev.off()
+
+```
+
+# OLD
 
 ## Compare results across cancer types
 
