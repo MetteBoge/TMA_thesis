@@ -6,22 +6,29 @@ editor: visual
 
 ```{r}
 # Until I decide to loop, define cancer type here: 
-c_type <- "PAAD"
+c_type <- "LUSC"
+# Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
+sub_ctype <- "SKCM_tumor"
 ```
 
 ## Load packages and targets
 
 ```{r}
 library(tidyverse)
+library(patchwork)
 library(R.utils)
 #library(arrow)
 library(biomaRt)
 library(seqinr)
 library(RColorBrewer)
+library(kableExtra)
+library(rmarkdown)
 #library(viridis)
 ```
 
 ```{r}
+path_save_plots <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Plots/Transcript_analysis/"
+
 target_list <- c("CD274", "PDCD1LG2", "IDO1", "TDO2", "ARG1", "ARG2", "TGFB1", "CCL22", "CCL2", "LGALS3","LRRC32", "IL10", "SIGLEC15", "BIRC7")
 
 cancer_abbr_list <- c("LAML", "CHOL", "CESC", "DLBC", "HNSC", "BRCA", "PAAD", "SKCM", "LUAD", "LUSC")
@@ -236,30 +243,30 @@ df_pheno <- df_clin_pd %>%
 ```{r}
 # Load in more phenotype data
 
-#for (c_type in cancer_abbr_list) {
-download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
-                        c_type, 
-                        ".sampleMap%2F",
-                        c_type, 
-                        "_clinicalMatrix")
-
-file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
-
-
-if (!(file.exists(file_name_pheno))){
- download.file(download_link, file_name_pheno, mode = "wb")
-} 
-
-# Load data tables to list: 
-if (!exists("phenotype_ctype")){
-  phenotype_ctype <- list()
-  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
-    dplyr::rename(sample = sampleID)
-} else if (!c_type %in% names(phenotype_ctype)){
-  phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
-    dplyr::rename(sample = sampleID)
+for (c_type in cancer_abbr_list) {
+  download_link <- paste0("https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/TCGA.", 
+                          c_type, 
+                          ".sampleMap%2F",
+                          c_type, 
+                          "_clinicalMatrix")
+  
+  file_name_pheno <- paste0(file_path_xenadata, "TCGA_", c_type, "_phenotype.tsv")
+  
+  
+  if (!(file.exists(file_name_pheno))){
+   download.file(download_link, file_name_pheno, mode = "wb")
+  } 
+  
+  # Load data tables to list: 
+  if (!exists("phenotype_ctype")){
+    phenotype_ctype <- list()
+    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+      dplyr::rename(sample = sampleID)
+  } else if (!c_type %in% names(phenotype_ctype)){
+    phenotype_ctype[[c_type]] <- read.csv(file_name_pheno, sep = "\t") %>% 
+      dplyr::rename(sample = sampleID)
+  }
 }
-#}
 ```
 
 ```{r}
@@ -267,57 +274,48 @@ if (!exists("phenotype_ctype")){
 sample_id_df <- list()
 full_pheno <- list()
 
-#for (c_type in cancer_abbr_list){
-df_pheno_c_type <- df_pheno %>% 
-  filter(cancer.type.abbreviation == c_type)
+for (c_type in cancer_abbr_list){
+  df_pheno_c_type <- df_pheno %>% 
+    filter(cancer.type.abbreviation == c_type)
+  
+  # Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
+  # For Melanoma, both metastatic and tumor. 
+  if (c_type == "LAML"){
+   # Choose those who do not have atra_exposure
+   no_apl <- phenotype_ctype[[c_type]] %>% 
+     filter(leukemia_french_american_british_morphology_code != "M3") %>% 
+     dplyr::select(sample) %>% 
+     unlist(use.names = F)
+   
+   sample_id_df[[c_type]]  <- df_pheno_c_type %>% 
+     filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood",
+            sample %in% no_apl) %>%
+     dplyr::select(sample)
+   
+  } else if(c_type == "SKCM"){
+   sample_id_df[["SKCM_tumor"]] <- df_pheno_c_type %>% 
+     filter(sample_type == "Primary Tumor") %>%
+     dplyr::select(sample)
+   
+   sample_id_df[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
+     filter(sample_type == "Metastatic") %>%
+     dplyr::select(sample)
+   
+  } else if(c_type == "BRCA"){
+   sample_id_df[["BRCA"]] <- df_pheno_c_type %>% 
+      filter(sample_type == "Primary Tumor", 
+             gender == "FEMALE") %>%
+      dplyr::select(sample) 
+  
+   
+  } else {
+   sample_id_df[[c_type]] <- df_pheno_c_type %>% 
+     filter(sample_type == "Primary Tumor") %>%
+     dplyr::select(sample) 
+  }
 
-# Filter sample ids to only include those of tumor tissue. For LAML: only PBMC. 
-# For Melanoma, both metastatic and tumor. 
-if (c_type == "LAML"){
- sample_id_df[[c_type]] <- df_pheno_c_type %>% 
-   filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood") %>%
-   dplyr::select(sample)
- 
-} else if(c_type == "SKCM"){
- sample_id_df[["SKCM_tumor"]] <- df_pheno_c_type %>% 
-   filter(sample_type == "Primary Tumor") %>%
-   dplyr::select(sample)
- 
- sample_id_df[["SKCM_metastatic"]] <- df_pheno_c_type %>% 
-   filter(sample_type == "Metastatic") %>%
-   dplyr::select(sample)
- 
-} else {
- sample_id_df[[c_type]] <- df_pheno_c_type %>% 
-   filter(sample_type == "Primary Tumor") %>%
-   dplyr::select(sample) 
 }
 
-#}
-
-
-
-```
-
-```{r}
-# Write file with all sample IDS: 
-#sample_id_df %>% 
-#  bind_rows() %>% 
-#  write.csv(paste0(file_path_xenadata, "all_sample_ids_of_interest.txt"), 
-#            row.names = FALSE, quote = FALSE)
-```
-
-```{r}
-
-# List of patients with more than one sample. Options to compare gene expression in same individual but from different tissue (e.g. tumor vs normal tissue same patient) 
-#pat_morethan1sample <- df_pheno %>%    
-#  group_by(X_PATIENT) %>%    
-#  summarise(n=n()) %>%   
-#  filter(n>1 & n < 200) %>%    
-#  dplyr::select(X_PATIENT) %>%    
-#  unlist(use.names = F)  
-#df_pheno %>%  
-#  filter(X_PATIENT %in% pat_morethan1sample)
 ```
 
 ### Read transcript data
@@ -327,67 +325,939 @@ if (c_type == "LAML"){
 
 transcript_tpm <- list()
 
-
-
-#for (c_type in cancer_abbr_list){
-df_tmp <- read.csv(paste0(file_path_git, 
-                          "transcript_expression/TCGA_pancan_tpm_transcripts_", c_type, ".tsv"), sep="\t") %>%
-  dplyr::rename(transcript_id = sample, 
-         transcript_name = Name)
-
-colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
-
-if (c_type == "SKCM"){
-  sample_ids_tmp_skcm_meta <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
-  sample_ids_tmp_skcm_tumor <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
+for (c_type in cancer_abbr_list){
+  df_tmp <- read.csv(paste0(file_path_git, 
+                            "transcript_expression/TCGA_pancan_tpm_transcripts_", c_type, ".tsv"), sep="\t") %>%
+    dplyr::rename(transcript_id = sample, 
+           transcript_name = Name)
   
-  transcript_tpm[["SKCM_metastatic"]] <- df_tmp %>% 
-    dplyr::select(transcript_id, transcript_name, sample_ids_tmp_skcm_meta)
+  colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
   
-  transcript_tpm[["SKCM_tumor"]] <- df_tmp %>% 
-    dplyr::select(transcript_id, transcript_name, sample_ids_tmp_skcm_tumor)
+  if (c_type == "SKCM"){
+    
+    for (sub_ctype in c("SKCM_metastatic", "SKCM_tumor")){
+      sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[sub_ctype]]))
+      
+      transcript_tpm[[sub_ctype]] <- df_tmp %>% 
+        dplyr::select(transcript_id, transcript_name, sample_ids_tmp)
+    }
+    
   
-} else {
-  sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
-  
-  transcript_tpm[[c_type]] <- df_tmp %>% 
-    dplyr::select(transcript_id, transcript_name, sample_ids_tmp)
+    
+  } else {
+    sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
+    
+    transcript_tpm[[c_type]] <- df_tmp %>% 
+      dplyr::select(transcript_id, transcript_name, sample_ids_tmp)
+  }
+    
+
 }
+
+#transcript_count <- list()
+
+#df_tmp <- read.csv(paste0(file_path_git, 
+#                          "transcript_expression/TCGA_pancan_expected_count_transcripts_", c_type, ".tsv"), 
+#                   sep="\t") %>%
+#  dplyr::rename(transcript_id = sample, 
+#         transcript_name = Name)
+
+#colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
+
+#if (c_type == "SKCM"){
   
+#  if(sub_ctype == "SKCM_metastatic"){
+#    sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
+#  } else if (sub_ctype == "SKCM_tumor"){
+#    sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
+    
+#  }
+#  transcript_count[["SKCM"]] <- df_tmp %>% 
+#    dplyr::select(transcript_name, transcript_id, sample_ids_tmp)
+  
+#} else {
+#  sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
+  
+#  transcript_count[[c_type]] <- df_tmp %>% 
+#    dplyr::select(transcript_name, transcript_id, sample_ids_tmp)
 #}
 
-
-
-transcript_count <- list()
-
-#for (c_type in cancer_abbr_list){
-df_tmp <- read.csv(paste0(file_path_git, 
-                          "transcript_expression/TCGA_pancan_expected_count_transcripts_", c_type, ".tsv"), 
-                   sep="\t") %>%
-  dplyr::rename(transcript_id = sample, 
-         transcript_name = Name)
-
-colnames(df_tmp) <- gsub("\\.", "-", colnames(df_tmp))
-
-if (c_type == "SKCM"){
-  sample_ids_tmp_skcm_meta <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_metastatic"]]))
-  sample_ids_tmp_skcm_tumor <- intersect(colnames(df_tmp), unlist(sample_id_df[["SKCM_tumor"]]))
-  
-  transcript_count[["SKCM_metastatic"]] <- df_tmp %>% 
-    dplyr::select(transcript_name, transcript_id, sample_ids_tmp_skcm_meta)
-  
-  transcript_count[["SKCM_tumor"]] <- df_tmp %>% 
-    dplyr::select(transcript_name, transcript_id, sample_ids_tmp_skcm_tumor)
-  
-} else {
-  sample_ids_tmp <- intersect(colnames(df_tmp), unlist(sample_id_df[[c_type]]))
-  
-  transcript_count[[c_type]] <- df_tmp %>% 
-    dplyr::select(transcript_name, transcript_id, sample_ids_tmp)
-}
-  
-#}
 ```
+
+## Investigate transcripts
+
+```{r}
+# Download the AA sequences of the coding transcripts: 
+
+transcript_info_filepath <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv"
+
+if (!(file.exists(transcript_info_filepath))){
+  df_transcripts <- tibble()
+  
+  for (gene in target_list){
+    df_transcripts <- bind_rows(df_transcripts, read_csv(paste0("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_", gene, ".csv"), show_col_types = FALSE))  
+  }
+
+  write_tsv(df_transcripts, transcript_info_filepath)
+}
+
+
+# Remove version numbers from the transcript ID. 
+transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>% 
+  dplyr::rename(transcript_id = `Transcript ID`) %>% 
+  mutate(transcript_id = gsub("\\..*", "", transcript_id)) %>% 
+  arrange(Name)
+
+
+transcript_info_wSeq <- transcript_info %>% 
+  mutate(uniprot_seq = map(`UniProt Match`, function(uni_id) {
+    if (nchar(uni_id)>1){
+      print(uni_id)
+      # If contains a space, it might have two ids: Split
+      if (grepl(" ", uni_id)){
+        print(paste(uni_id, "has more than one"))
+        seq_list <- list()
+        for (sub_id in unlist(strsplit(uni_id, " "))){
+          seq_list[[sub_id]] <- tryCatch({
+            read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", sub_id, ".fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]}, 
+            error = function(cond){
+              message(paste("Error ocurred when downloading:", sub_id))
+              message(conditionMessage(cond))
+              message("Trying to download from different link.")
+              read.fasta(url(paste0("https://rest.uniprot.org/unisave/", sub_id, "?format=fasta")), 
+                                           as.string = T, 
+                                           seqtype = "AA", 
+                                           set.attributes = F)[[1]]
+            })
+        }
+        return(seq_list)
+      } else {
+        read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", 
+                             uni_id, ".fasta")), 
+                  as.string = T, 
+                  seqtype = "AA", 
+                  set.attributes = F)[[1]]
+      }
+    } else 
+      NaN
+    }))
+
+# Check the nchar in the seq: (lengths)
+#transcript_info_wSeq %>% 
+#  mutate(seq_length = map(uniprot_seq, nchar)) %>% 
+#  View()
+
+# Unnest if more than one sequence:
+transcript_info_wSeq <- transcript_info_wSeq %>% 
+  mutate(uniprot_seq = map(uniprot_seq, ~ if (!is.list(.x)) list(.x) else .x)) %>%  # Convert characters to lists 
+  unnest(uniprot_seq) %>% 
+  distinct()
+
+
+transcript_info_protein <- transcript_info_wSeq %>% 
+  dplyr::select(transcript_id, Protein, Biotype)
+
+
+coding_wo_seq <- transcript_info %>% 
+  filter(nchar(`UniProt Match`)<2,
+         Biotype != "Retained intron") %>% 
+  dplyr::select(transcript_id) %>% 
+  mutate(Biotype = "Protein coding (unknown seq.)")
+
+```
+
+```{r}
+# Looks like NO transcripts have more than one sequence. 
+#transcript_info_wSeq$uniprot_seq
+```
+
+### Target sequences
+
+```{r}
+# Construct data frame of the target sequences recieved on email from Morten Holmstrom. 
+
+# Protein, name of epitope, epitope: 
+target_seq <- rbind(c("CD274", "IO103", "FMTYWHLLNAFTVTVPKDL"),
+      c("IDO1", "IO102", "DTLLKALLEIASCLEKALQVF"),
+      c("ARG1", "ARGLong2", "ISAKDIVYIGLRDVDPGEHYILKTLGIKYFSMTEVDRL"),
+      c("PDCD1LG2", "PD-L2Long1", "SLELQLHQIAALFTVTVPKEL"),
+      c("CCL22", "CCL22Long1", "MDRLQTALLVVLVLLAVALQAT"),
+      c("ARG2", "ARG2Long", "LQTRVHSILKKSVHSVAVIG"),
+      c("TGFb1", "TGFb_02", "LLLPLLWLLVLTPGRPAAGL"),
+      c("TGFb1", "TGFb_15", "REAVPEPVLLSRAELRLLRL"),
+      c("TGFb1", "TGFb_33", "FCLGPCPYIWSLDTQYSKVL"),
+      c("TGFb1", "TGFb_38", "GRKPKVEQLSNMIVRSCKCS"),
+      c("IL10", "IL10_L17", "FDIFINYIEAYMTMKIRN")) %>% 
+  as_tibble()
+
+colnames(target_seq) <- c("protein", "epitope_name", "epitope_seq")
+
+# Align to protein sequences of coding transcripts: 
+target_seq <- target_seq %>%
+  rowwise() %>%
+  mutate(matching_proteins = list(transcript_info_wSeq %>%
+                                    filter(str_detect(uniprot_seq, epitope_seq)) %>%
+                                    pull(Name))) %>%
+  ungroup() %>% 
+  unnest(matching_proteins) %>% 
+  distinct() # Remove duplicated rows. 
+
+prot_w_target_seq <- target_seq %>% 
+  dplyr::select(protein) %>% 
+  unique() %>% 
+  unlist(use.names = F) %>% 
+  toupper()
+
+
+target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
+```
+
+```{r}
+# Add information about target sequence: 
+transcript_tpm_ctype <- transcript_tpm[[c_type]] %>% 
+  mutate(transcript_id = gsub("\\..*", "", transcript_id)) %>% 
+  left_join(transcript_info_protein, by="transcript_id") %>% 
+  mutate(target_seq_incl = ifelse(transcript_name %in% target_match_trans, TRUE, FALSE)) %>% 
+  mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+  mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                         ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+  mutate(gene_name = gsub("-.*", "", transcript_name)) %>% 
+  relocate(transcript_id, transcript_name, gene_name, Protein, Biotype, target_seq_incl) %>% 
+  dplyr::select(-c(Protein, target_seq_incl))
+
+#### NB!!!!! These are the transcript Isoforms which are NOT in the pancan transcript expression data!
+# Does this mean they are not expressed in samples or just that they were not discovered back then
+# Include in discussion !!!!
+# Moreover! Some protein coding sequences do not have CDS defined (no unniprot match), meaning for these we did not find target but they could potentially include it anyway! I will name these appropriately.
+transcript_info[!transcript_info$Name %in% transcript_tpm_ctype$transcript_name,]
+
+transcript_info %>% 
+  filter(grepl("SIGLEC",Name))
+
+# Add information about protein coding with unknown sequence (no uniprot match)
+transcript_tpm_ctype <- transcript_tpm_ctype %>% 
+  left_join(coding_wo_seq, by = "transcript_id") %>% 
+  mutate(Biotype = ifelse(is.na(Biotype.y), Biotype.x, Biotype.y)) %>% 
+  relocate(Biotype) %>% 
+  dplyr::select(-c(Biotype.x, Biotype.y))
+
+```
+
+```{r}
+# Do inverse log transformation and calculate gene/sample wise the percentage of 
+transcript_percentage_ctype <- transcript_tpm_ctype %>% 
+  pivot_longer(cols = -c(transcript_id, transcript_name, gene_name, Biotype),
+               values_to = "transcript_exp",
+               names_to = "samples") %>% 
+  group_by(gene_name, samples) %>% 
+  mutate(transcript_exp_inv = 2 ^ transcript_exp - 0.001) %>% 
+  mutate(transcript_exp_inv = ifelse(transcript_exp_inv<0, 0, transcript_exp_inv)) %>% 
+  mutate(total_exp_inv = sum(transcript_exp_inv)) %>% # filter(samples == "TCGA-2J-AAB1-01", gene_name=="IDO1")
+  mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+  ungroup() %>% 
+  arrange(samples)
+
+transcript_percentage_ctype$transcript_name %>% unique() %>% length()
+
+```
+
+## Transcript summary
+
+Information about:
+
+-   Transcripts from ensembl not found in data.
+
+-   Transcripts from data with uniprot sequences
+
+-   Number of transcripts in data per gene. Number of transcripts in ensembl per gene. Include information of coding, non-coding, with sequence or not, with target or not.
+
+-   Any non-coding sequences with sequence?
+
+```{r}
+# Finding out how many transcripts matches target epitope: 
+
+# Transcripts from ensembl not in our data: 
+
+transcripts_in_our_data <- transcript_tpm_ctype$transcript_id %>% 
+  unique()
+
+#transcripts_not_in_our_data <- transcript_info_wSeq$transcript_id[!transcript_info_wSeq$transcript_id %in% transcripts_in_our_data]
+
+# Add column about if in our data and if has sequence: 
+transcript_info_wSeq_2 <- transcript_info_wSeq %>% 
+  mutate(in_our_data = ifelse(transcript_id %in% transcripts_in_our_data, 
+                              "yes", "no")) %>% 
+  mutate(uniprot_seq = unlist(uniprot_seq)) %>% 
+  mutate(has_seq = ifelse(uniprot_seq == "NaN", "no", "yes"),
+         gene = gsub("-.*", "", Name)) %>% 
+  relocate(gene) %>% 
+  mutate(target_seq_incl = ifelse(Name %in% target_match_trans, TRUE, FALSE)) %>% 
+  mutate(target_match= ifelse(target_seq_incl, "yes", 
+                              ifelse(gene %in% prot_w_target_seq, "no", "no_ccit_target"))) %>% 
+  dplyr::select(gene, Name, Biotype, has_seq, in_our_data, target_match, `UniProt Match`) %>% 
+  mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                         ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+  mutate(Biotype = ifelse(Biotype == "Protein coding" & has_seq == "no", 
+                          "Protein coding (unknown seq.)", Biotype))
+
+
+# Did I manage to find a sequence for all the transcripts with UniProt Match? 
+transcript_info_wSeq_2 %>% 
+  filter(has_seq == "no" & nchar(`UniProt Match`) >2)
+# Seems like it 
+
+
+transcript_info_wSeq_2 <- transcript_info_wSeq_2 %>% 
+  mutate(Biotype = case_when(target_match == "yes" & Biotype == "Protein coding" ~ "Protein coding (+ target)",
+                             target_match == "no" & Biotype == "Protein coding" ~ "Protein coding (- target)",
+                             #has_seq == "yes" & Biotype == "Non-coding" ~ "Non-coding (with seq.)",
+                             TRUE ~ Biotype))
+
+biotype_colors <- c(
+    "Protein coding (+ target)" = "#1fd082ff", 
+    "Protein coding (- target)" = "#fc7634ff",
+    "Protein coding (unknown seq.)" = "#f6d04dff", 
+    "Non-coding" = "#79238eff"
+  )
+  
+transcript_info_wSeq_2 %>% 
+  filter(target_match != "no_ccit_target") %>% 
+  group_by(gene, Biotype, in_our_data) %>% 
+  summarise(n = n()) %>% 
+  mutate(Biotype = factor(Biotype,
+                          levels=c("Non-coding",
+                                   "Protein coding (- target)",
+                                   "Protein coding (unknown seq.)",
+                                   "Protein coding (+ target)"))) %>% 
+  ggplot(aes(x=in_our_data, y=n, fill = Biotype)) + 
+  geom_bar(stat = "identity", position = "stack", width = 0.8) +
+  facet_grid(.~gene, switch = "x") +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10), expand = expansion(mult = c(0, 0.1))) + # Ensure integer y-axis
+  theme_minimal() +
+  theme(
+  #  strip.placement = "outside",        # Place facet labels outside the plot area
+    strip.text.x = element_text(size = 10), # Adjust font size of facet labels
+    panel.spacing = unit(1, "lines")   # Add space between panels
+  ) +
+  scale_fill_manual(values = biotype_colors, drop = F) +
+  labs(title = "Transcripts related to genes with CCIT immunotherapeutic target",
+       x = "In TCGA data",
+       y = "Count")
+
+ggsave(filename = paste0(path_save_plots, 
+                  "transcript_summary_with_target.pdf"),
+       device = cairo_pdf,
+       width = 10)
+
+
+biotype_colors <- c(
+    "Protein coding (+ target)" = "#1fd082ff", 
+    "Protein coding" = "#fc7634ff",
+    "Protein coding (unknown seq.)" = "#f6d04dff", 
+    "Non-coding" = "#79238eff"
+  )
+
+transcript_info_wSeq_2 %>% 
+  filter(target_match == "no_ccit_target") %>% 
+  group_by(gene, Biotype, in_our_data) %>% 
+  summarise(n = n()) %>%  
+  ggplot(aes(x=in_our_data, y=n, fill = Biotype)) + 
+  geom_bar(stat = "identity", position = "stack", width = 0.4) +
+  facet_grid(.~gene, switch = "x") +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10), expand = expansion(mult = c(0, 0.1))) + # Ensure integer y-axis
+  theme_minimal() +
+  theme(
+  #  strip.placement = "outside",        # Place facet labels outside the plot area
+    strip.text.x = element_text(size = 10), # Adjust font size of facet labels
+    panel.spacing = unit(1, "lines")   # Add space between panels
+  ) +
+  scale_fill_manual(values = biotype_colors, drop = F)  +
+  labs(title = "Transcripts related to genes without CCIT immunotherapeutic target",
+       x = "In TCGA data",
+       y = "Count")
+  
+ggsave(filename = paste0(path_save_plots, 
+                  "transcript_summary_without_target.pdf"),
+       device = cairo_pdf,
+       width = 9)
+
+
+
+# Make a summary table of the transcripts: 
+# How many transcripts does each target gene have, how many are coding, non-coding and how many have sequence? 
+```
+
+## Loop plotting cancer types
+
+```{r}
+
+run_plotting_tables <- function(c_type){
+  # Add information about target sequence: 
+  transcript_tpm_ctype <- transcript_tpm[[c_type]] %>% 
+    mutate(transcript_id = gsub("\\..*", "", transcript_id)) %>% 
+    left_join(transcript_info_protein, by="transcript_id") %>% 
+    mutate(target_seq_incl = ifelse(transcript_name %in% target_match_trans, TRUE, FALSE)) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    mutate(Biotype= ifelse(Biotype %in% c("Retained intron", "Nonsense mediated decay"), "Non-coding", 
+                           ifelse(grepl("Protein coding", Biotype), "Protein coding", Biotype))) %>% 
+    mutate(gene_name = gsub("-.*", "", transcript_name)) %>% 
+    relocate(transcript_id, transcript_name, gene_name, Protein, Biotype, target_seq_incl) %>% 
+    dplyr::select(-c(Protein, target_seq_incl))
+  
+  
+  # Add information about protein coding with unknown sequence (no uniprot match)
+  transcript_tpm_ctype <- transcript_tpm_ctype %>% 
+    left_join(coding_wo_seq, by = "transcript_id") %>% 
+    mutate(Biotype = ifelse(is.na(Biotype.y), Biotype.x, Biotype.y)) %>% 
+    relocate(Biotype) %>% 
+    dplyr::select(-c(Biotype.x, Biotype.y))
+  
+  # Do inverse log transformation and calculate gene/sample wise the percentage of 
+  transcript_percentage_ctype <- transcript_tpm_ctype %>% 
+    pivot_longer(cols = -c(transcript_id, transcript_name, gene_name, Biotype),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    group_by(gene_name, samples) %>% 
+    mutate(transcript_exp_inv = 2 ^ transcript_exp - 0.001) %>% 
+    mutate(transcript_exp_inv = ifelse(transcript_exp_inv<0, 0, transcript_exp_inv)) %>% 
+    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% # filter(samples == "TCGA-2J-AAB1-01", gene_name=="IDO1")
+    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+    ungroup() %>% 
+    arrange(samples)
+  
+  
+  
+  #### PLOTTING: 
+  
+  plots_genes <- list()
+  tot_biotype_prot_table <- list()
+  target_prot_table <- list()
+  
+  # Remove genes with only one transcript in data (or one unique type)
+  target_list_of_interest <- target_list[!target_list %in% c("BIRC7", "CCL22", "PDCD1LG2")]
+  
+  for (gene_x in target_list_of_interest){
+    
+    transcript_percentage_ctype_gene <- transcript_percentage_ctype %>%
+      filter(gene_name == gene_x) %>% 
+      mutate(Biotype = case_when(Biotype == "Protein coding" ~ "Protein coding (- target)",
+                                 Biotype == "target_epitope" ~ "Protein coding (+ target)",
+                                 TRUE ~ Biotype)) %>% 
+      dplyr::select(c(Biotype, samples, percentage_exp, transcript_name))
+    
+    # Add extra dummy data point for a random sample to have all biotypes represented in at least one gene.
+    if (gene_x == "ARG1") {
+      # Add a dummy row with minimal expression
+      dummy_sample <- transcript_percentage_ctype_gene$samples[1] # Pick an existing sample
+      transcript_percentage_ctype_gene <- transcript_percentage_ctype_gene %>%
+        add_row(Biotype = "Protein coding (- target)",
+                samples = dummy_sample,
+                percentage_exp = 10^-5,
+                transcript_name = "dummy_transcript")
+    }
+    
+    biotypes <- transcript_percentage_ctype_gene$Biotype %>% unique()
+    
+    if ("Protein coding (+ target)" %in% biotypes){
+      sortby1 <- "Protein coding (+ target)"
+      sortby2 <- "Protein coding (- target)"
+          
+      biotype_colors <- c(
+        "Protein coding (+ target)" = "#1fd082ff", 
+        "Protein coding (- target)" = "#fc7634ff",
+        "Protein coding (unknown seq.)" = "#f6d04dff", 
+        "Non-coding" = "#79238eff"
+      )
+      
+    } else {
+      sortby1 <- "Protein coding (known seq.)"
+      sortby2 <- "Protein coding (unknown seq.)"   
+      
+      transcript_percentage_ctype_gene <- transcript_percentage_ctype %>%
+      filter(gene_name == gene_x) %>% 
+      mutate(Biotype = case_when(Biotype == "Protein coding" ~ "Protein coding (known seq.)",
+                                 TRUE ~ Biotype)) %>% 
+      dplyr::select(c(Biotype, samples, percentage_exp, transcript_name))
+      
+      biotype_colors <- c(
+        "Protein coding (known seq.)" = "#fc7634ff",
+        "Protein coding (unknown seq.)" = "#f6d04dff", 
+        "Non-coding" = "#79238eff"
+      )
+    }
+    
+    
+    ### ORDER OF BARS
+    # Calculate the order of samples based on `target_epitope`
+    sample_order_primary <- transcript_percentage_ctype_gene %>%
+      filter(Biotype == sortby1) %>% # Focus on the specific biotype
+      group_by(samples) %>%                  # Group by sample
+      summarise(total_percentage_X = sum(percentage_exp, na.rm = TRUE)) %>% # Sum percentages
+      arrange(desc(total_percentage_X))  # Arrange in descending order
+    
+    # Add secondary biotype (Y) percentages
+    sample_order_secondary <- transcript_percentage_ctype_gene %>%
+      filter(Biotype == sortby2) %>% # Focus on secondary biotype
+      group_by(samples) %>%
+      summarise(total_percentage_Y = sum(percentage_exp, na.rm = TRUE)) %>% 
+      arrange(desc(total_percentage_Y)) 
+    
+    # Merge primary and secondary orders
+    sample_order <- sample_order_primary %>%
+      left_join(sample_order_secondary, by = "samples") %>%
+      mutate(total_percentage_Y = replace_na(total_percentage_Y, 0)) %>% # Handle missing secondary values
+      arrange(desc(total_percentage_X), desc(total_percentage_Y)) %>% # Order by primary then secondary
+      pull(samples) # Extract ordered sample names
+  
+    ###############
+    
+    n_transcripts <- transcript_percentage_ctype_gene$transcript_name %>% 
+      unique() %>% 
+      length()
+    
+    trans_string <- paste0(gene_x, 
+                           " (", 
+                           n_transcripts, 
+                           ifelse(n_transcripts > 1, " transcripts)", " transcript)"))
+    
+    # Does it include all biotypes: 
+    has_all_biotypes <- ifelse(length(biotypes) < length(biotype_colors), FALSE, TRUE)
+    
+
+    plots_genes[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+      mutate(samples = factor(samples, levels = sample_order),
+             percentage_exp = percentage_exp * 100) %>% 
+      na.omit() %>% 
+      ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+      geom_bar(stat = "identity", width = 1) +
+      theme_minimal() +
+      theme(axis.text.x = element_blank(), 
+            axis.ticks.x = element_blank(),
+            text = element_text(size = 10),
+            title = element_text(size=10),
+            axis.title = element_blank(),
+            legend.position = ifelse(has_all_biotypes, "right", "none")) +
+      labs(x = "Samples", 
+           y = "Transcript expression (%)",
+           fill = "Transcript type",
+           title = trans_string) +
+      scale_fill_manual(values = biotype_colors, drop = F)
+    
+  
+    
+    
+    # Recall the data frame to omit all changes needed for plotting
+    transcript_percentage_ctype_gene <- transcript_percentage_ctype %>%
+      filter(gene_name == gene_x) %>% 
+      mutate(Biotype = case_when(Biotype == "Protein coding" ~ "Protein coding (- target)",
+                                 Biotype == "target_epitope" ~ "Protein coding (+ target)",
+                                 TRUE ~ Biotype))
+    
+    ### TOTAL, summing all samples: One gene only ###
+    # How much of the transcripts expressed are target seq, non-coding and protein coding (not target)
+    if (sortby1 == "Protein coding (+ target)"){
+      # How much of the coding transcript is covered by target sequence
+      target_prot_table[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+        group_by(Biotype) %>% 
+        filter(Biotype != "Non-coding") %>% 
+        summarise(biotype_sum = sum(transcript_exp_inv)) %>% 
+        mutate(tot = sum(biotype_sum)) %>% 
+        mutate(percentage_biotype_tot = biotype_sum/tot * 100, 
+               gene = gene_x)
+      
+    }
+    
+    tot_biotype_prot_table[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+      group_by(Biotype) %>% 
+      summarise(biotype_sum = sum(transcript_exp_inv)) %>% 
+      mutate(tot = sum(biotype_sum)) %>% 
+      mutate(percentage_biotype_tot = biotype_sum/tot * 100, 
+             gene = gene_x)
+  }
+  
+  
+  #########
+  # Collect to patchworks: 
+  
+  with_targets <- target_prot_table %>% names()
+  without_targets <- names(plots_genes)[!names(plots_genes) %in% with_targets]
+  
+  (plots_genes[with_targets][[1]] + plots_genes[with_targets][[2]] + 
+   plots_genes[with_targets][[3]] + plots_genes[with_targets][[4]] +
+   plots_genes[with_targets][[5]] + plots_genes[with_targets][[6]]) +
+  plot_layout(ncol = 3, nrow = 2, guides = "collect") +
+  plot_annotation(title = paste("Composition of transcript expression in", 
+                    c_type, "for genes with CCIT immunotherapeutic target"))
+  
+  ggsave(filename = ifelse(c_type == "SKCM",
+                    paste0(path_save_plots, 
+                    "target_isoforms_",
+                    c_type, "_", gsub("SKCM_", "",sub_ctype),
+                    ".pdf"),
+                    paste0(path_save_plots, 
+                    "target_isoforms_",
+                    c_type, 
+                    ".pdf")),
+         device = cairo_pdf,
+         width = 11)
+  
+  
+  (plots_genes[without_targets][[1]] + plots_genes[without_targets][[2]] + 
+   plots_genes[without_targets][[3]] + plots_genes[without_targets][[4]] +
+   plots_genes[without_targets][[5]]) +
+  plot_layout(ncol = 3, nrow = 2, guides = "collect")  +
+  plot_annotation(title = paste("Composition of transcript expression in", 
+                    c_type, "for genes without CCIT immunotherapeutic target"))
+  
+  ggsave(filename = ifelse(c_type == "SKCM",
+                    paste0(path_save_plots, 
+                    "no_target_isoforms_",
+                    c_type, "_", gsub("SKCM_", "",sub_ctype),
+                    ".pdf"),
+                    paste0(path_save_plots, 
+                    "no_target_isoforms_",
+                    c_type, 
+                    ".pdf")),
+         device = cairo_pdf,
+         width = 11)
+  
+  
+  ###### TABLES:::
+  target_prot_table_full <- target_prot_table %>% 
+    bind_rows() %>% 
+    mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+    rename(`Biotype transcript expression` = biotype_sum,
+           `Total transcript expression for gene` = tot,
+           `Percentage biotype` = percentage_biotype_tot)
+  
+  tot_biotype_prot_table_full <- tot_biotype_prot_table %>% 
+    bind_rows() %>% 
+    mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+    rename(`Biotype transcript expression` = biotype_sum,
+           `Total transcript expression for gene` = tot,
+           `Percentage biotype` = percentage_biotype_tot)
+  
+  
+  
+  
+  table_file_name_1 <- ifelse(c_type == "SKCM", 
+                paste0(path_save_plots, 
+                       "table_total_distribution_of_transcript_types_in_", 
+                       sub_ctype, ".pdf"),
+                paste0(path_save_plots, 
+                       "table_total_distribution_of_transcript_types_in_", 
+                       c_type, ".pdf"))
+  
+  table_file_name_2 <- ifelse(c_type == "SKCM", 
+                paste0(path_save_plots, 
+                       "table_total_cover_of_target_in_", 
+                       sub_ctype, ".pdf"),
+                paste0(path_save_plots, 
+                       "table_total_cover_of_target_in_", 
+                       c_type, ".pdf"))
+  
+  table<-kable(target_prot_table_full, format="markdown")
+  cat(table, sep="\n", 
+      file=table_file_name_2)
+  render(table_file_name_2,
+         output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+  
+  table<-kable(tot_biotype_prot_table_full, format="markdown")
+  cat(table, sep="\n", 
+      file=table_file_name_1)
+  render(table_file_name_1,
+         output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+}
+```
+
+```{r}
+
+#tmp_list <- c("SKCM", "LUAD", "LUSC")
+
+for (c_type in cancer_abbr_list){
+  print(c_type)
+  if (c_type == "SKCM"){
+    for (sub_ctype in c("SKCM_tumor", "SKCM_metastatic")){
+      print(sub_ctype)
+      run_plotting_tables(sub_ctype)
+    }
+  } else {
+    run_plotting_tables(c_type)
+  }
+}
+
+
+```
+
+## Plots and tables
+
+```{r}
+
+
+for_patchwork <- TRUE
+
+plots_genes <- list()
+tot_biotype_prot_table <- list()
+target_prot_table <- list()
+
+gene_x <- "ARG1"
+
+# Remove BIRC7 because all transcripts are protein coding with sequence (no CCIT target)
+target_list_of_interest <- target_list[target_list != "BIRC7"]
+
+for (gene_x in target_list){
+  
+  transcript_percentage_ctype_gene <- transcript_percentage_ctype %>%
+    filter(gene_name == gene_x) %>% 
+    mutate(Biotype = case_when(Biotype == "Protein coding" ~ "Protein coding (- target)",
+                               Biotype == "target_epitope" ~ "Protein coding (+ target)",
+                               TRUE ~ Biotype)) %>% 
+    dplyr::select(c(Biotype, samples, percentage_exp, transcript_name))
+  
+  # Add extra dummy data point for a random sample to have all biotypes represented in at least one gene.
+  if (gene_x == "ARG1") {
+    # Add a dummy row with minimal expression
+    dummy_sample <- transcript_percentage_ctype_gene$samples[1] # Pick an existing sample
+    transcript_percentage_ctype_gene <- transcript_percentage_ctype_gene %>%
+      add_row(Biotype = "Protein coding (- target)",
+              samples = dummy_sample,
+              percentage_exp = 10^-5,
+              transcript_name = "dummy_transcript")
+  }
+  
+  biotypes <- transcript_percentage_ctype_gene$Biotype %>% unique()
+  
+  if ("Protein coding (+ target)" %in% biotypes){
+    sortby1 <- "Protein coding (+ target)"
+    sortby2 <- "Protein coding (- target)"
+        
+    biotype_colors <- c(
+      "Protein coding (+ target)" = "#1fd082ff", 
+      "Protein coding (- target)" = "#fc7634ff",
+      "Protein coding (unknown seq.)" = "#f6d04dff", 
+      "Non-coding" = "#79238eff"
+    )
+    
+  } else {
+    sortby1 <- "Protein coding (- target)"
+    sortby2 <- "Protein coding (unknown seq.)"   
+    
+    biotype_colors <- c(
+      "Protein coding (- target)" = "#fc7634ff",
+      "Protein coding (unknown seq.)" = "#f6d04dff", 
+      "Non-coding" = "#79238eff"
+    )
+  }
+  
+  
+  ### ORDER OF BARS
+  # Calculate the order of samples based on `target_epitope`
+  sample_order_primary <- transcript_percentage_ctype_gene %>%
+    filter(Biotype == sortby1) %>% # Focus on the specific biotype
+    group_by(samples) %>%                  # Group by sample
+    summarise(total_percentage_X = sum(percentage_exp, na.rm = TRUE)) %>% # Sum percentages
+    arrange(desc(total_percentage_X))  # Arrange in descending order
+  
+  # Add secondary biotype (Y) percentages
+  sample_order_secondary <- transcript_percentage_ctype_gene %>%
+    filter(Biotype == sortby2) %>% # Focus on secondary biotype
+    group_by(samples) %>%
+    summarise(total_percentage_Y = sum(percentage_exp, na.rm = TRUE)) %>% 
+    arrange(desc(total_percentage_Y)) 
+  
+  # Merge primary and secondary orders
+  sample_order <- sample_order_primary %>%
+    left_join(sample_order_secondary, by = "samples") %>%
+    mutate(total_percentage_Y = replace_na(total_percentage_Y, 0)) %>% # Handle missing secondary values
+    arrange(desc(total_percentage_X), desc(total_percentage_Y)) %>% # Order by primary then secondary
+    pull(samples) # Extract ordered sample names
+
+  ###############
+  
+  n_transcripts <- transcript_percentage_ctype_gene$transcript_name %>% 
+    unique() %>% 
+    length()
+  
+  trans_string <- paste0(gene_x, 
+                         " (", 
+                         n_transcripts, 
+                         ifelse(n_transcripts > 1, " transcripts)", " transcript)"))
+  
+  # Does it include all biotypes: 
+  has_all_biotypes <- ifelse(length(biotypes) < length(biotype_colors), FALSE, TRUE)
+  
+  # Depending on whether or not I will put them into patchwork make different plots: 
+  if (for_patchwork){
+    plots_genes[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+      mutate(samples = factor(samples, levels = sample_order),
+             percentage_exp = percentage_exp * 100) %>% 
+      na.omit() %>% 
+      ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+      geom_bar(stat = "identity", width = 1) +
+      theme_minimal() +
+      theme(axis.text.x = element_blank(), 
+            axis.ticks.x = element_blank(),
+            text = element_text(size = 10),
+            title = element_text(size=10),
+            axis.title = element_blank(),
+            legend.position = ifelse(has_all_biotypes, "right", "none")) +
+      labs(x = "Samples", 
+           y = "Transcript expression (%)",
+           fill = "Transcript type",
+           title = trans_string) +
+      scale_fill_manual(values = biotype_colors, drop = F)
+    
+  } else {
+    plots_genes[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+      mutate(Biotype = gsub("target_epitope", "Protein coding (+ target)", Biotype),
+           Biotype = ifelse(Biotype == "Protein coding", 
+                            "Protein coding (- target)",
+                            Biotype)) %>% 
+      mutate(samples = factor(samples, levels = sample_order),
+             percentage_exp = percentage_exp * 100) %>% 
+      na.omit() %>% 
+      ggplot(aes(x=samples, y=percentage_exp, fill=Biotype)) +
+      geom_bar(stat = "identity", width = 1) +
+      theme_minimal() +
+      theme(axis.text.x = element_blank(), 
+            axis.ticks.x = element_blank(),
+            text = element_text(size = 14)) +
+      labs(x = "Samples", 
+           y = "Transcript expression (%)",
+           fill = "Transcript type",
+           title = paste(trans_string, "expression in", c_type)) +
+      scale_fill_manual(values = biotype_colors)
+  }
+  
+  
+  # Recall the data frame to omit all changes needed for plotting
+  transcript_percentage_ctype_gene <- transcript_percentage_ctype %>%
+    filter(gene_name == gene_x) %>% 
+    mutate(Biotype = case_when(Biotype == "Protein coding" ~ "Protein coding (- target)",
+                               Biotype == "target_epitope" ~ "Protein coding (+ target)",
+                               TRUE ~ Biotype))
+  
+  ### TOTAL, summing all samples: One gene only ###
+  # How much of the transcripts expressed are target seq, non-coding and protein coding (not target)
+  if (sortby1 == "Protein coding (+ target)"){
+    # How much of the coding transcript is covered by target sequence
+    target_prot_table[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+      group_by(Biotype) %>% 
+      filter(Biotype != "Non-coding") %>% 
+      summarise(biotype_sum = sum(transcript_exp_inv)) %>% 
+      mutate(tot = sum(biotype_sum)) %>% 
+      mutate(percentage_biotype_tot = biotype_sum/tot * 100, 
+             gene = gene_x)
+    
+  }
+  
+  tot_biotype_prot_table[[gene_x]] <- transcript_percentage_ctype_gene %>% 
+    group_by(Biotype) %>% 
+    summarise(biotype_sum = sum(transcript_exp_inv)) %>% 
+    mutate(tot = sum(biotype_sum)) %>% 
+    mutate(percentage_biotype_tot = biotype_sum/tot * 100, 
+           gene = gene_x)
+}
+
+```
+
+```{r}
+# Collect to patchworks: 
+
+with_targets <- target_prot_table %>% names()
+without_targets <- names(plots_genes)[!names(plots_genes) %in% with_targets]
+
+(plots_genes[with_targets][[1]] + plots_genes[with_targets][[2]] + 
+ plots_genes[with_targets][[3]] + plots_genes[with_targets][[4]] +
+ plots_genes[with_targets][[5]] + plots_genes[with_targets][[6]] + 
+ plots_genes[with_targets][[7]] + plots_genes[with_targets][[8]]) +
+plot_layout(ncol = 4, nrow = 2, guides = "collect") 
+
+ggsave(filename = ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, 
+                  "target_isoforms_",
+                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  ".pdf"),
+                  paste0(path_save_plots, 
+                  "target_isoforms_",
+                  c_type, 
+                  ".pdf")),
+       device = cairo_pdf,
+       width = 12)
+
+
+(plots_genes[without_targets][[1]] + plots_genes[without_targets][[2]] + 
+ plots_genes[without_targets][[3]] + plots_genes[without_targets][[4]] +
+ plots_genes[without_targets][[5]]) +
+plot_layout(ncol = 3, nrow = 2, guides = "collect") 
+
+ggsave(filename = ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, 
+                  "no_target_isoforms_",
+                  c_type, "_", gsub("SKCM_", "",sub_ctype),
+                  ".pdf"),
+                  paste0(path_save_plots, 
+                  "no_target_isoforms_",
+                  c_type, 
+                  ".pdf")),
+       device = cairo_pdf,
+       width = 10)
+```
+
+### Tables
+
+```{r}
+target_prot_table_full <- target_prot_table %>% 
+  bind_rows() %>% 
+  mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+  rename(`Biotype transcript expression` = biotype_sum,
+         `Total transcript expression for gene` = tot,
+         `Percentage biotype` = percentage_biotype_tot)
+
+tot_biotype_prot_table_full <- tot_biotype_prot_table %>% 
+  bind_rows() %>% 
+  mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+  rename(`Biotype transcript expression` = biotype_sum,
+         `Total transcript expression for gene` = tot,
+         `Percentage biotype` = percentage_biotype_tot)
+
+
+
+
+table_file_name_1 <- ifelse(c_type == "SKCM", 
+              paste0(path_save_plots, 
+                     "table_total_distribution_of_transcript_types_in_", 
+                     sub_ctype, ".pdf"),
+              paste0(path_save_plots, 
+                     "table_total_distribution_of_transcript_types_in_", 
+                     c_type, ".pdf"))
+
+table_file_name_2 <- ifelse(c_type == "SKCM", 
+              paste0(path_save_plots, 
+                     "table_total_cover_of_target_in_", 
+                     sub_ctype, ".pdf"),
+              paste0(path_save_plots, 
+                     "table_total_cover_of_target_in_", 
+                     c_type, ".pdf"))
+
+table<-kable(target_prot_table_full, format="markdown")
+cat(table, sep="\n", 
+    file=table_file_name_2)
+render(table_file_name_2,
+       output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+
+table<-kable(tot_biotype_prot_table_full, format="markdown")
+cat(table, sep="\n", 
+    file=table_file_name_1)
+render(table_file_name_1,
+       output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+
+```
+
+## OLD
 
 ### Read mutations
 
@@ -680,125 +1550,132 @@ transcript_data[[c_type]] %>%
 
 ```
 
-## Investigate the transcripts
+### Plots
+
+#### Violin plots
 
 ```{r}
-# Download the AA sequences of the coding transcripts: 
+# Violin plots of original expression values 
 
-transcript_info_filepath <- "C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_all.tsv"
+gene_w_single_transcript <- transcript_data_ctype_long %>% 
+  filter(samples == "TCGA-56-A5DR-01") %>% 
+  group_by(gene_id_b) %>% 
+  summarise(n=n()) %>% 
+  filter(n<2) %>% 
+  dplyr::select(gene_id_b) %>% 
+  unlist()
 
-if (!(file.exists(transcript_info_filepath))){
-  df_transcripts <- tibble()
+
+p_transcript_exp_w_epitope <- list()
+p_transcript_exp_wo_epitope <- list()
+p_transcript_exp_single_trans <- list()
+
+for (c_type in cancer_abbr_list){
+    
+  transcript_data_ctype <- transcript_data[[c_type]] %>% 
+    left_join(transcript_info_protein, by="transcript_id") %>% 
+    mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
+    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
+    relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
+    dplyr::select(-c(Protein, target_seq_incl))
   
-  for (gene in target_list){
-    df_transcripts <- bind_rows(df_transcripts, read_csv(paste0("C:/Users/Mette/OneDrive - Danmarks Tekniske Universitet/11. Semester Speciale/Data/transcripts_", gene, ".csv"), show_col_types = FALSE))  
-  }
-
-  write_tsv(df_transcripts, transcript_info_filepath)
+  
+  transcript_data_ctype_long <- transcript_data_ctype %>% 
+    pivot_longer(cols = -c(transcript_id, gene_id, gene_id_b, Biotype),
+                 values_to = "transcript_exp",
+                 names_to = "samples") %>% 
+    group_by(gene_id_b, samples) %>% 
+    mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
+    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
+    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
+    ungroup() 
+  
+  n_samples = transcript_data_ctype_long %>% 
+    dplyr::select(samples) %>% 
+    unique() %>% 
+    nrow()
+  
+  p_transcript_exp_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.title.x = element_text(vjust = 0),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  
+  p_transcript_exp_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(!gene_id_b %in% prot_w_target_seq,
+           !gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      axis.title.x = element_text(vjust = 0),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
+  
+  p_transcript_exp_single_trans[[c_type]] <- transcript_data_ctype_long %>% 
+    filter(gene_id_b %in% gene_w_single_transcript) %>% 
+    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
+    geom_violin() +
+    facet_wrap(~gene_id_b, scales = "free_x") + 
+    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
+      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
+      caption = "Source: Xena Browser, TCGA PANCAN",
+      x = "Isoforms",
+      y = "Transcript expression (log2(tpm + 0.001))"
+    ) +
+    scale_fill_brewer(palette = "Dark2") + 
+    #scale_fill_viridis(option = "D", discrete = T) + 
+    theme(
+      text=element_text(family="serif"),
+      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
+      plot.caption = element_text(face = "italic"),
+      axis.title = element_text(size = 13),
+#      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      strip.background.x = element_blank(),
+      legend.position = ifelse(c_type == "LUSC", "right", "none")
+      )
 }
 
 
-# Remove version numbers from the transcript ID. 
-transcript_info <- read_tsv(transcript_info_filepath, show_col_types = FALSE) %>% 
-  mutate(`Transcript ID` = gsub("\\..*", "", `Transcript ID`)) %>% 
-  rename(transcript_id = `Transcript ID`) %>% 
-  arrange(Name)
-
-
-transcript_info_wSeq <- transcript_info %>% 
-  mutate(uniprot_seq = map(`UniProt Match`, function(uni_id) {
-    if (nchar(uni_id)>1){
-      print(uni_id)
-      # If contains a space, it might have two ids: Split
-      if (grepl(" ", uni_id)){
-        
-        seq_list <- list()
-        for (sub_id in unlist(strsplit(uni_id, " "))){
-          seq_list[[sub_id]] <- tryCatch({
-            read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", sub_id, ".fasta")), 
-                                           as.string = T, 
-                                           seqtype = "AA", 
-                                           set.attributes = F)[[1]]}, 
-            error = function(cond){
-              message(paste("Error ocurred when downloading:", sub_id))
-              message(conditionMessage(cond))
-              message("Trying to download from different link.")
-              read.fasta(url(paste0("https://rest.uniprot.org/unisave/", sub_id, "?format=fasta")), 
-                                           as.string = T, 
-                                           seqtype = "AA", 
-                                           set.attributes = F)[[1]]
-            })
-        }
-        return(seq_list)
-      } else {
-        read.fasta(url(paste0("https://rest.uniprot.org/uniprotkb/", 
-                             uni_id, ".fasta")), 
-                  as.string = T, 
-                  seqtype = "AA", 
-                  set.attributes = F)[[1]]
-      }
-    } else 
-      NaN
-    }))
-
-# Check the nchar in the seq: (lengths)
-#transcript_info_wSeq %>% 
-#  mutate(seq_length = map(uniprot_seq, nchar)) %>% 
-#  View()
-
-# Unnest if more than one sequence:
-transcript_info_wSeq <- transcript_info_wSeq %>% 
-  mutate(uniprot_seq = map(uniprot_seq, ~ if (!is.list(.x)) list(.x) else .x)) %>%  # Convert characters to lists 
-  unnest(uniprot_seq)
-
-
-transcript_info_protein <- transcript_info_wSeq %>% 
-  dplyr::select(transcript_id, Protein, Biotype)
-
+p_transcript_exp_single_trans
 ```
-
-### Target sequences
-
-```{r}
-# Construct data frame of the target sequences recieved on email from Morten Holmstrom. 
-
-# Protein, name of epitope, epitope: 
-target_seq <- rbind(c("CD274", "IO103", "FMTYWHLLNAFTVTVPKDL"),
-      c("IDO1", "IO102", "DTLLKALLEIASCLEKALQVF"),
-      c("ARG1", "ARGLong2", "ISAKDIVYIGLRDVDPGEHYILKTLGIKYFSMTEVDRL"),
-      c("PDCD1LG2", "PD-L2Long1", "SLELQLHQIAALFTVTVPKEL"),
-      c("CCL22", "CCL22Long1", "MDRLQTALLVVLVLLAVALQAT"),
-      c("ARG2", "ARG2Long", "LQTRVHSILKKSVHSVAVIG"),
-      c("TGFb1", "TGFb_02", "LLLPLLWLLVLTPGRPAAGL"),
-      c("TGFb1", "TGFb_15", "REAVPEPVLLSRAELRLLRL"),
-      c("TGFb1", "TGFb_33", "FCLGPCPYIWSLDTQYSKVL"),
-      c("TGFb1", "TGFb_38", "GRKPKVEQLSNMIVRSCKCS"),
-      c("IL10", "IL10_L17", "FDIFINYIEAYMTMKIRN")) %>% 
-  as_tibble()
-
-colnames(target_seq) <- c("protein", "epitope_name", "epitope_seq")
-
-# Align to protein sequences of coding transcripts: 
-target_seq <- target_seq %>%
-  rowwise() %>%
-  mutate(matching_proteins = list(transcript_info_wSeq %>%
-                                    filter(str_detect(uniprot_seq, epitope_seq)) %>%
-                                    pull(Name))) %>%
-  ungroup() %>% 
-  unnest(matching_proteins) %>% 
-  distinct() # Remove duplicated rows. 
-
-prot_w_target_seq <- target_seq %>% 
-  dplyr::select(protein) %>% 
-  unique() %>% 
-  unlist(use.names = F) %>% 
-  toupper()
-
-
-target_match_trans <- target_seq["matching_proteins"] %>% unlist(use.names = F)
-```
-
-### Percentage of expression
 
 ```{r}
 
@@ -969,134 +1846,4 @@ transcript_data_long_all %>%
         title = element_text(size = 20),
         axis.text = element_text(size=10))
 
-
-```
-
-## OLD
-
-### Plots
-
-#### Violin plots
-
-```{r}
-# Violin plots of original expression values 
-
-gene_w_single_transcript <- transcript_data_ctype_long %>% 
-  filter(samples == "TCGA-56-A5DR-01") %>% 
-  group_by(gene_id_b) %>% 
-  summarise(n=n()) %>% 
-  filter(n<2) %>% 
-  dplyr::select(gene_id_b) %>% 
-  unlist()
-
-
-p_transcript_exp_w_epitope <- list()
-p_transcript_exp_wo_epitope <- list()
-p_transcript_exp_single_trans <- list()
-
-for (c_type in cancer_abbr_list){
-    
-  transcript_data_ctype <- transcript_data[[c_type]] %>% 
-    left_join(transcript_info_protein, by="transcript_id") %>% 
-    mutate(target_seq_incl = ifelse(gene_id %in% target_match_trans, TRUE, FALSE)) %>% 
-    mutate(Biotype= ifelse(target_seq_incl, "target_epitope", Biotype)) %>% 
-    relocate(transcript_id, gene_id, gene_id_b, Protein, Biotype, target_seq_incl) %>% 
-    dplyr::select(-c(Protein, target_seq_incl))
-  
-  
-  transcript_data_ctype_long <- transcript_data_ctype %>% 
-    pivot_longer(cols = -c(transcript_id, gene_id, gene_id_b, Biotype),
-                 values_to = "transcript_exp",
-                 names_to = "samples") %>% 
-    group_by(gene_id_b, samples) %>% 
-    mutate(transcript_exp_inv = 2 ^ transcript_exp) %>% 
-    mutate(total_exp_inv = sum(transcript_exp_inv)) %>% 
-    mutate(percentage_exp = transcript_exp_inv / total_exp_inv) %>% 
-    ungroup() 
-  
-  n_samples = transcript_data_ctype_long %>% 
-    dplyr::select(samples) %>% 
-    unique() %>% 
-    nrow()
-  
-  p_transcript_exp_w_epitope[[c_type]] <- transcript_data_ctype_long %>% 
-    filter(gene_id_b %in% prot_w_target_seq,
-           !gene_id_b %in% gene_w_single_transcript) %>% 
-    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
-    geom_violin() +
-    facet_wrap(~gene_id_b, scales = "free_x") + 
-    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
-      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
-      caption = "Source: Xena Browser, TCGA PANCAN",
-      x = "Isoforms",
-      y = "Transcript expression (log2(tpm + 0.001))"
-    ) +
-    scale_fill_brewer(palette = "Dark2") + 
-    #scale_fill_viridis(option = "D", discrete = T) + 
-    theme(
-      text=element_text(family="serif"),
-      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
-      plot.caption = element_text(face = "italic"),
-      axis.title = element_text(size = 13),
-      axis.title.x = element_text(vjust = 0),
-      axis.text.x = element_text(angle = 90, vjust = 0.5),
-      strip.background.x = element_blank(),
-      legend.position = ifelse(c_type == "LUSC", "right", "none")
-      )
-  
-  
-  p_transcript_exp_wo_epitope[[c_type]] <- transcript_data_ctype_long %>% 
-    filter(!gene_id_b %in% prot_w_target_seq,
-           !gene_id_b %in% gene_w_single_transcript) %>% 
-    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
-    geom_violin() +
-    facet_wrap(~gene_id_b, scales = "free_x") + 
-    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
-      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
-      caption = "Source: Xena Browser, TCGA PANCAN",
-      x = "Isoforms",
-      y = "Transcript expression (log2(tpm + 0.001))"
-    ) +
-    scale_fill_brewer(palette = "Dark2") + 
-    #scale_fill_viridis(option = "D", discrete = T) + 
-    theme(
-      text=element_text(family="serif"),
-      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
-      plot.caption = element_text(face = "italic"),
-      axis.title = element_text(size = 13),
-      axis.text.x = element_text(angle = 90, vjust = 0.5),
-      axis.title.x = element_text(vjust = 0),
-      strip.background.x = element_blank(),
-      legend.position = ifelse(c_type == "LUSC", "right", "none")
-      )
-  
-  p_transcript_exp_single_trans[[c_type]] <- transcript_data_ctype_long %>% 
-    filter(gene_id_b %in% gene_w_single_transcript) %>% 
-    ggplot(aes(x=gene_id, y=transcript_exp, fill=Biotype)) +
-    geom_violin() +
-    facet_wrap(~gene_id_b, scales = "free_x") + 
-    labs(#title = "Composition of expressed transcripts for \n6 genes without target epitopes",
-      subtitle = paste0(c_type, " (n = ", n_samples, ")"),
-      caption = "Source: Xena Browser, TCGA PANCAN",
-      x = "Isoforms",
-      y = "Transcript expression (log2(tpm + 0.001))"
-    ) +
-    scale_fill_brewer(palette = "Dark2") + 
-    #scale_fill_viridis(option = "D", discrete = T) + 
-    theme(
-      text=element_text(family="serif"),
-      plot.title = element_text(color = "#0099f8", size = 16, face = "bold", hjust = 0.5),
-      plot.subtitle = element_text(face = "bold.italic", hjust = 0.5),
-      plot.caption = element_text(face = "italic"),
-      axis.title = element_text(size = 13),
-#      axis.text.x = element_text(angle = 90, vjust = 0.5),
-      strip.background.x = element_blank(),
-      legend.position = ifelse(c_type == "LUSC", "right", "none")
-      )
-}
-
-
-p_transcript_exp_single_trans
 ```

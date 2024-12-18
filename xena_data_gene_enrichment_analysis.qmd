@@ -96,14 +96,14 @@ if (c_type == "LAML"){
     dplyr::rename(sample = sampleID)
   
  # Choose those who do not have atra_exposure
- no_atra_exp <- phenotype_ctype[[c_type]] %>% 
-   filter(atra_exposure != "YES") %>% 
+ no_apl <- phenotype_ctype[[c_type]] %>% 
+   filter(leukemia_french_american_british_morphology_code != "M3") %>% 
    dplyr::select(sample) %>% 
    unlist(use.names = F)
  
  sample_id_of_interest[[c_type]] <- df_pheno_c_type %>% 
    filter(sample_type == "Primary Blood Derived Cancer - Peripheral Blood",
-          sample %in% no_atra_exp) %>%
+          sample %in% no_apl) %>%
    dplyr::select(sample)
  
 } else if(c_type == "SKCM"){
@@ -322,8 +322,8 @@ if (!file.exists(R_element_name_2)){
   # Rename gene names (target genes) from gene column to be ensembl !
   geneName_ensg_nlist <- geneName_ensg %>% deframe()
   
-  full_corr_df <- full_corr_df %>% 
-    mutate(gene = recode(gene, !!!geneName_ensg_nlist))
+  full_corr_df %>% 
+    mutate(gene = dplyr::recode(gene, !!!geneName_ensg_nlist))
   
   
   #### ssGSEA analysis
@@ -373,6 +373,7 @@ if (!file.exists(R_element_name_2)){
   
   ssgsea_results <- readRDS(R_element_name_2)
 }
+
 
 ```
 

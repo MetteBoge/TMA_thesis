@@ -66,6 +66,111 @@ ssgsea_results_all <- ssgsea_results_ctype %>%
   bind_rows()
 ```
 
+## PAAD (cold) vs SKCM (warm)
+
+```{r}
+# All results for each of the two cancer types:
+ssgsea_results_skcm_t <- ssgsea_results_all %>% 
+  filter(cancer_type == "SKCM_tumor")
+
+ssgsea_results_paad <- ssgsea_results_all %>% 
+  filter(cancer_type == "PAAD")
+
+# Define how many BP to include per gene: 
+top_n <- 10
+
+gene_x <- target_list[1]
+
+skcm_t_top_corr <- list()
+paad_top_corr <- list()
+skcm_paad_summary <- list()
+
+for (gene_x in target_list){
+  ssgsea_results_skcm_t_genex <- ssgsea_results_skcm_t %>% 
+    dplyr::select(c(BP, all_of(gene_x), cancer_type))
+  
+  colnames(ssgsea_results_skcm_t_genex)[2] <- "ES"
+  
+  skcm_t_top_corr[[gene_x]] <- ssgsea_results_skcm_t_genex %>% 
+    filter(ES > 0) %>% 
+    arrange(desc(ES)) %>% 
+    mutate(BP = gsub("GOBP_", "", BP),
+          gene = gene_x) %>% 
+    head(top_n) 
+  
+  
+  ## PAAD: 
+  ssgsea_results_paad_genex <- ssgsea_results_paad %>% 
+    dplyr::select(c(BP, all_of(gene_x), cancer_type))
+  
+  colnames(ssgsea_results_paad_genex)[2] <- "ES"
+  
+  paad_top_corr[[gene_x]] <- ssgsea_results_paad_genex %>% 
+    filter(ES > 0) %>% 
+    arrange(desc(ES)) %>% 
+    mutate(BP = gsub("GOBP_", "", BP),
+          gene = gene_x) %>% 
+    head(top_n)
+  
+  # Collect in a summary: 
+  skcm_paad_summary[[gene_x]] <- paad_top_corr[[gene_x]] %>% 
+    dplyr::select(gene) %>% 
+    mutate(SKCM_t = skcm_t_top_corr[[gene_x]]$BP,
+           PAAD = paad_top_corr[[gene_x]]$BP,
+           in_common_paad = FALSE) %>% 
+    arrange(SKCM_t, PAAD)
+     
+  top_n_in_common <- intersect(paad_top_corr[[gene_x]]$BP,
+                               skcm_t_top_corr[[gene_x]]$BP)
+  
+  if(length(top_n_in_common) > 0){
+    print(paste(gene_x, "has BP in common for the two cancer types"))
+    
+    skcm_paad_summary[[gene_x]] <- skcm_paad_summary[[gene_x]] %>% 
+      mutate(in_common_paad = ifelse(PAAD %in% top_n_in_common, TRUE, FALSE))
+  }
+  
+}
+
+paad_top_corr_full <- paad_top_corr %>% 
+  bind_rows()
+
+skcm_t_top_corr_full <- skcm_t_top_corr %>% 
+  bind_rows() 
+
+both_top_corr_full <- paad_top_corr_full %>% 
+  rbind(paad_top_corr_full)
+
+skcm_paad_summary_full <- skcm_paad_summary %>% 
+  bind_rows()
+
+both_top_corr_full
+```
+
+```{r}
+uniq_BP <- skcm_paad_summary_full %>% 
+  filter(in_common_paad == FALSE)
+
+in_common_BP <- skcm_paad_summary_full %>% 
+  filter(in_common_paad == TRUE) %>% 
+  dplyr::select(gene, PAAD) %>% 
+  dplyr::rename(BP = PAAD)
+
+uniq_BP
+in_common_BP 
+```
+
+### Heatmap
+
+```{r}
+skcm_t_top_corr_full %>% 
+  ggplot(aes(x=gene, y=BP, fill=ES)) +
+  geom_tile()
+
+```
+
+# OLD: Summarize across cancer types
+
 ```{r}
 # All positive correlations. Subset all the BPs in common. If more than 20, then subset these on highest mean ES across cancer types top 20.
 
@@ -159,6 +264,33 @@ Heatmap(
 )
 
 dev.off()
+
+# Open PDF device
+pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers_onlytop20_wo_geneset_names.pdf"), width = 5, height = 8)
+
+# Create heatmap
+Heatmap(
+  heatmap_matrix[, ordered_genes], # Reorder columns by clustering
+  name = "Mean\nEnrichment Score",
+  col = colorRamp2(c(0, max(heatmap_matrix)), c("pink", "red4")), # Adjust color scale
+  #col = colorRamp2(
+  #c(0, max(heatmap_matrix) / 2, max(heatmap_matrix)), # Define breaks: low, mid, high
+  #c("blue4", "white", "red4") # Colors for low, mid, high
+#), 
+  cluster_rows = FALSE, # Optionally cluster gene sets
+  cluster_columns = TRUE, # Columns already ordered
+  row_title = "Gene Sets",
+  column_title = paste("Top 20 Most Correlated Gene Ontology Biological Processes\n In 11 Cancers Across 14 Genes"),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 8) # Adjust legend title font size
+  ),
+  column_names_gp = gpar(fontsize = 8),
+  column_names_rot = 45,
+  show_row_names = FALSE,
+  row_names_gp = gpar(fontsize = 3),
+)
+
+dev.off()
 ```
 
 ```{r}
@@ -185,7 +317,7 @@ gene_clustering <- hclust(gene_dist, method = "average")   # Hierarchical cluste
 ordered_genes <- colnames(heatmap_matrix_2)[gene_clustering$order]
 
 # Open PDF device
-pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers_wo_geneset_names.pdf"), width = 10, height = 8)
+pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers_wo_geneset_names.pdf"), width = 5, height = 8)
 
 # Create heatmap
 Heatmap(
@@ -209,6 +341,95 @@ Heatmap(
 # Close the PDF device
 dev.off()
 
+
+# Open PDF device
+pdf(file = paste0(path_save_plots, "ssGSEA_heatmap_all_cancers.pdf"), width = 10, height = 8)
+
+# Create heatmap
+Heatmap(
+  heatmap_matrix_2[, ordered_genes], # Reorder columns by clustering
+  name = "Mean\nEnrichment Score",
+  col = colorRamp2(c(0, max(heatmap_matrix_2)), c("pink", "red4")), # Adjust color scale
+  cluster_rows = FALSE, # Optionally cluster gene sets
+  cluster_columns = TRUE, # Columns already ordered
+  row_title = "Gene Sets",
+  column_title = paste("Top 20 Most Correlated Gene Ontology Biological Processes\n In 11 Cancers Across 14 Genes"),
+  show_row_names = TRUE,
+  column_names_rot = 45,
+  row_km = 3,
+  #row_names_gp = gpar(fontsize = 3),
+  column_names_gp = gpar(fontsize = 8),
+  heatmap_legend_param = list(
+    title_gp = gpar(fontsize = 8) # Adjust legend title font size
+  ),
+  row_names_gp = gpar(fontsize = 3)
+  
+)
+
+# Close the PDF device
+dev.off()
+
+```
+
+## Tables
+
+```{r}
+ssgsea_results_all %>% 
+  dplyr::select(cancer_type== "SKCM_tumor")
+```
+
+```{r}
+# Top 20: 
+ssgsea_all_genes %>% 
+  group_by(BP) %>% 
+  reframe(target_genes = list(unique(gene))) %>% 
+  mutate(target_genes = sapply(target_genes, paste, collapse = ", ")) %>% 
+  arrange(target_genes)
+
+# Top 10: 
+top_10_table <- ssgsea_all_genes %>% 
+  group_by(gene) %>% 
+  arrange(desc(mean_ES), .by_group = TRUE) %>%  # Sort by decreasing mean_ES
+  slice_head(n = 10) %>% 
+  ungroup() %>% 
+  group_by(BP) %>% 
+  reframe(target_genes = list(unique(gene))) %>% 
+  mutate(target_genes = sapply(target_genes, paste, collapse = ", ")) %>% 
+  arrange(target_genes)
+  
+
+for (gene_x in target_list){
+  
+}
+
+#top_10_table %>% 
+#  dplyr::filter(target_genes == gene_x) %>% 
+
+top_10_table
+
+
+# Make pretty table
+tbl <- top_10_table %>% 
+  kable(caption = paste("Top 10 most positive correlated BP")) %>%   
+  kable_styling(full_width = F, position = "center", fixed_thead = T) %>%
+  column_spec(1:ncol(top_10_table), width = "1cm") 
+
+
+table_file_name <- paste0(path_save_plots, 
+                          "top_10_table.pdf")
+
+table<-kable(tbl, format="markdown")
+cat(table, sep="\n", 
+    file=table_file_name)
+render(table_file_name,
+       output_format = rmarkdown::pdf_document(latex_engine = "lualatex"))
+
+```
+
+```{r}
+top_10_table %>% 
+  mutate(tdo = ifelse(grepl("TDO2", target_genes), TRUE, FALSE)) %>% 
+  filter(tdo)
 ```
 
 # OLD
