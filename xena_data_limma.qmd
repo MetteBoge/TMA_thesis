@@ -21,7 +21,7 @@ plot_mds <- FALSE
 include_cell_fractions <- FALSE
 
 # Until I decide to loop, define cancer type here: 
-c_type <- "BRCA"
+c_type <- "LAML"
 # Only relevant if SKCM: choose SKCM_tumor or SKCM_metastatic
 sub_ctype <- "SKCM_metastatic"
 # PAAD
@@ -51,6 +51,10 @@ library(stringi)
 library(viridis)
 library(Cairo)
 library(stringr)
+
+library(patchwork)
+library(egg)
+library(cowplot)
 
 library(rmarkdown)
 ```
@@ -1733,7 +1737,7 @@ legend_size_mut <- 6
 ```{r}
 # Plot with correct y-axis coloring
 # Change the names for the plot: 
-table_w_adjP_sig %>% 
+phenotype_heatmap <- table_w_adjP_sig %>% 
   filter(!grepl("cellfrac", phenotype), 
          !grepl("mut_", phenotype)) %>% 
   mutate(phenotype = rename_phenotype[phenotype]) %>% 
@@ -1760,6 +1764,12 @@ table_w_adjP_sig %>%
   mutate(condition_plot = gsub("_", " ", condition_plot)) %>% 
   mutate(condition_plot = gsub("_", " ", condition_plot)) %>% 
   mutate(condition_plot = gsub("\nTRUE  vs FALSE ", "", condition_plot)) %>% 
+  # Remove # Histological type from y axis texts and menopause status: 
+  mutate(condition_plot = ifelse(grepl("histological_type", condition),
+                                 gsub("Histological Type:\n", "", condition_plot),
+                                 ifelse(grepl("menopause_status", condition), 
+                                        gsub("Menopause Status:\n", "", condition_plot),
+                                        condition_plot))) %>%
   # Remove if condition is LOW: 
   filter(sample_sizes_limit != "LOW") %>% 
   mutate(significance = case_when(
@@ -1783,12 +1793,14 @@ table_w_adjP_sig %>%
     legend.text = element_text(size = legend_txt_size-2),
     legend.key.size = unit(legend_size, "mm")
   ) +
-  ggtitle(ifelse(c_type == "SKCM",
-                 paste0("Limma univariate analysis of ", c_type, 
-                        " (", gsub("SKCM_", "",sub_ctype), ")"),
-                 paste0("Limma univariate analysis of ", c_type))) +
+  #ggtitle(ifelse(c_type == "SKCM",
+  #               paste0("Limma univariate analysis of ", c_type, 
+  #                      " (", gsub("SKCM_", "",sub_ctype), ")"),
+  #               paste0("Limma univariate analysis of ", c_type))) +
   labs(subtitle = "Phenotypes") + 
   coord_fixed() # Make sure tiles are square
+
+phenotype_heatmap
 
 ggsave(filename = ifelse(c_type == "SKCM",
                   paste0(path_save_plots, 
@@ -1803,7 +1815,7 @@ ggsave(filename = ifelse(c_type == "SKCM",
 
 
 #### MUTATIONS
-table_w_adjP_sig %>% 
+mutation_heatmap <- table_w_adjP_sig %>% 
   filter(grepl("mut_", phenotype)) %>% 
   mutate(phenotype = paste(gsub("mut_", "", phenotype), "mutation")) %>% 
   rowwise() %>% 
@@ -1839,12 +1851,14 @@ table_w_adjP_sig %>%
     legend.text = element_text(size = legend_txt_size_mut-2),
     legend.key.size = unit(legend_size_mut, "mm")
   ) +
-  ggtitle(ifelse(c_type == "SKCM",
-                 paste0("Limma univariate analysis of ", c_type, 
-                        " (", gsub("SKCM_", "",sub_ctype), ")"),
-                 paste0("Limma univariate analysis of ", c_type))) +
+  #ggtitle(ifelse(c_type == "SKCM",
+  #               paste0("Limma univariate analysis of ", c_type, 
+  #                      " (", gsub("SKCM_", "",sub_ctype), ")"),
+  #               paste0("Limma univariate analysis of ", c_type))) +
   labs(subtitle = "Mutations") + 
   coord_fixed() # Make sure tiles are square
+
+mutation_heatmap
 
 ggsave(filename = ifelse(c_type == "SKCM",
                   paste0(path_save_plots, 
@@ -1917,6 +1931,62 @@ if (include_cell_fractions){
 
 }
 
+```
+
+## Merge phenotype + mutation plots
+
+```{r}
+
+txt_axis_size_mut <- 10
+subtitle_size_mut <- 15
+
+mutation_heatmap_2 <- mutation_heatmap +
+  theme(legend.key.size = unit(0.5, "cm"),
+        legend.title = element_text(size = txt_axis_size_mut),
+        legend.text = element_text(size = txt_axis_size_mut),
+        axis.text.x = element_text(size = txt_axis_size_mut, 
+                                   angle = 30,
+                                   vjust = 0.75),
+        axis.text.y = element_text(size = txt_axis_size_mut),
+        plot.subtitle =  element_text(size=subtitle_size_mut))
+
+
+phenotype_heatmap_2 <- phenotype_heatmap +
+  theme(legend.key.size = unit(0.5, "cm"),
+        legend.title = element_text(size = txt_axis_size_mut),
+        legend.text = element_text(size = txt_axis_size_mut),
+        axis.text.x = element_text(size = txt_axis_size_mut, 
+                                   angle = 30,
+                                   vjust = 0.75),
+        axis.text.y = element_text(size = txt_axis_size_mut),
+        plot.subtitle =  element_text(size=subtitle_size_mut))
+
+```
+
+```{r}
+
+
+mut_ncol_heatmap <- mutation_heatmap_2$data$condition_plot %>% unique() %>% length()
+pheno_ncol_heatmap <- phenotype_heatmap_2$data$condition_plot %>% unique() %>% length()
+
+p1 <- egg::set_panel_size( mutation_heatmap_2, height=unit(mut_ncol_heatmap, "cm"),
+                          width=unit(length(target_list), "cm") )
+p2 <- egg::set_panel_size( phenotype_heatmap_2, height=unit(pheno_ncol_heatmap, "cm"),
+                          width=unit(length(target_list), "cm") )
+
+combined_plot <- cowplot::plot_grid( p1, p2 )
+
+# Save to PDF
+pdf(ifelse(c_type == "SKCM",
+                  paste0(path_save_plots, sub_ctype,
+                  "_heatmap_univariate_merged_mutations_phenotypes",
+                  ".pdf"),
+                  paste0(path_save_plots, c_type,
+                  "_heatmap_univariate_merged_mutations_phenotypes",
+                  ".pdf")), 
+    width = 16.1, height = 6) # Adjust width and height as needed
+print(combined_plot)
+dev.off()
 ```
 
 ## Boxplots
